@@ -16,6 +16,34 @@ const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ||
 const CACHE = path.join(ROOT, '..', 'cache');
 fs.mkdirSync(CACHE, { recursive: true });
 
+// Projects are one JSON file each, kept outside app/ so a deploy never touches them.
+const PROJECTS = path.join(ROOT, '..', 'data', 'projects');
+fs.mkdirSync(PROJECTS, { recursive: true });
+const projectFile = (id) => (/^[a-z0-9]{6,32}$/.test(id) ? path.join(PROJECTS, id + '.json') : null);
+
+function listProjects() {
+  const out = [];
+  for (const f of fs.readdirSync(PROJECTS)) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const p = JSON.parse(fs.readFileSync(path.join(PROJECTS, f), 'utf8'));
+      out.push({ id: p.id, name: p.name, pack: p.pack, updatedAt: p.updatedAt, words: (String(p.text || '').match(/\S+/g) || []).length });
+    } catch (e) { console.error('bad project', f, e.message); }
+  }
+  return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+function saveProject(id, b) {
+  const p = {
+    id, name: String(b.name || 'Untitled').slice(0, 80), pack: String(b.pack || ''), text: String(b.text || '').slice(0, 200_000),
+    scenes: Array.isArray(b.scenes) ? b.scenes.slice(0, 200) : [], coach: b.coach && typeof b.coach === 'object' ? b.coach : null,
+    createdAt: Number(b.createdAt) || Date.now(), updatedAt: Date.now(),
+  };
+  const file = projectFile(id), tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(p)); fs.renameSync(tmp, file);
+  return p;
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -43,15 +71,20 @@ function sendFile(res, file) {
   });
 }
 
+function json(res, status, body) {
+  res.writeHead(status, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache' });
+  res.end(JSON.stringify(body));
+}
+
 function safeJoin(base, rel) {
   const p = path.normalize(path.join(base, rel));
   return p.startsWith(base) ? p : null;
 }
 
-function readBody(req) {
+function readBody(req, limit = 400_000) {
   return new Promise((resolve, reject) => {
     let s = '';
-    req.on('data', (c) => { s += c; if (s.length > 400_000) reject(new Error('too large')); });
+    req.on('data', (c) => { s += c; if (s.length > limit) reject(new Error('too large')); });
     req.on('end', () => { try { resolve(JSON.parse(s || '{}')); } catch (e) { reject(e); } });
     req.on('error', reject);
   });
@@ -166,6 +199,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/packs') {
       res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache' });
       res.end(JSON.stringify(loadPacks())); return;
+    }
+    if (url.pathname === '/api/projects' && req.method === 'GET') return json(res, 200, listProjects());
+    if (url.pathname.startsWith('/api/projects/')) {
+      const id = url.pathname.slice('/api/projects/'.length), file = projectFile(id);
+      if (!file) return json(res, 400, { error: 'bad project id' });
+      if (req.method === 'PUT') { const p = saveProject(id, await readBody(req, 4_000_000)); return json(res, 200, { ok: true, updatedAt: p.updatedAt }); }
+      if (!fs.existsSync(file)) return json(res, 404, { error: 'no such project' });
+      if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache' }); res.end(fs.readFileSync(file)); return; }
+      if (req.method === 'DELETE') { fs.unlinkSync(file); return json(res, 200, { ok: true }); }
     }
     if (req.method === 'GET' && url.pathname === '/api/hold') {
       // Test helper: a response that takes ?ms, so a screenshot tool can wait in real time.
