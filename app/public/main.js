@@ -100,7 +100,7 @@ function loadProject(p) {
   S.scenes.clear();
   for (const s of p.scenes || []) {
     const raw = (s.raw || []).filter((r) => parseLine(r)), lines = raw.map(parseLine); if (!lines.length) continue;
-    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
+    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
   applyPack(); restoreCoach(p.coach); restoreResearch(p.research);
@@ -145,7 +145,7 @@ function snapshot(p) {
   const kept = new Map();
   S.paras.forEach((para, i) => {
     const sc = S.scenes.get(keyOf(para.text));
-    if (sc && sc.status === 'done' && sc.raw.length && !kept.has(sc.key)) kept.set(sc.key, { key: sc.key, idx: i, text: para.text, raw: sc.raw, round: sc.round || 0 });
+    if (sc && sc.status === 'done' && sc.raw.length && !kept.has(sc.key)) kept.set(sc.key, { key: sc.key, idx: i, text: para.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '' });
   });
   p.scenes = [...kept.values()];
 }
@@ -343,31 +343,52 @@ function schedule() {
   if (!S.pack) return;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
   const wanted = new Set(S.paras.map((p) => keyOf(p.text)));
-  // Keep the oldest and newest in-flight request per paragraph; drop the ones in between.
-  const queued = [...S.scenes.values()].filter((sc) => sc.status === 'wait' && !wanted.has(sc.key));
-  const byIdx = new Map(); queued.forEach((sc) => { if (!byIdx.has(sc.idx)) byIdx.set(sc.idx, []); byIdx.get(sc.idx).push(sc); });
-  for (const list of byIdx.values()) { list.sort((a, b) => a.seq - b.seq); list.slice(1).forEach((sc) => { sc.ctrl.abort(); S.scenes.delete(sc.key); }); }
+  // A request already in the queue is never cancelled because its paragraph was edited. It lands, and the
+  // edit then goes out as an update to that drawing, so the minute it has waited is not thrown away.
+  // Only a request whose paragraph is gone (deleted or rewritten from scratch) is dropped.
+  const busy = new Set();
+  for (const sc of [...S.scenes.values()]) {
+    if (!flying(sc) || wanted.has(sc.key) || sc.key.endsWith('|old')) continue;
+    const i = laterVersion(sc);
+    if (i < 0) { sc.ctrl.abort(); S.scenes.delete(sc.key); } else { busy.add(i); sc.idx = i; }
+  }
   if (improving && !wanted.has(improving.key)) stopImproving();
   let live = [...S.scenes.values()].filter(flying).length;
   for (const i of order) {
     const p = S.paras[i]; if (!p || p.text.length < 12) continue;
-    const key = keyOf(p.text); if (S.scenes.has(key)) continue;
+    const key = keyOf(p.text); if (S.scenes.has(key) || busy.has(i)) continue;
     if (live >= 5) break;
     startScene(i, p.text, key); live++;
   }
   renderPages(); showCurrent();
 }
 
+// How much two texts are the same paragraph: the share of the shorter one's words found in the other,
+// so adding or cutting a sentence still counts as the same paragraph.
+const wordsOf = (t) => new Set(t.toLowerCase().match(/[a-z0-9']+/g) || []);
+function alike(a, b) {
+  const x = wordsOf(a), y = wordsOf(b), small = Math.min(x.size, y.size); if (small < 3) return 0;
+  let same = 0; for (const w of x) if (y.has(w)) same++;
+  return same / small;
+}
+// The paragraph on the page that an in-flight request was an earlier wording of, or -1 when there is none.
+function laterVersion(sc) {
+  let best = -1, top = 0;
+  S.paras.forEach((p, i) => {
+    if (p.text.length < 12 || S.scenes.has(keyOf(p.text))) return;
+    const score = alike(sc.text, p.text) + (i === sc.idx ? 0.001 : 0);
+    if (score >= 0.6 && score > top) { best = i; top = score; }
+  });
+  return best;
+}
+
 // The drawing an edited paragraph had before the edit: the closest earlier text of this writing type.
 function earlierVersion(text, wanted) {
-  const words = (t) => new Set(t.toLowerCase().match(/[a-z0-9']+/g) || []); const now = words(text); let best = null, top = 0;
+  let best = null, top = 0;
   for (const sc of S.scenes.values()) {
     // Same writing type and same Fill gaps setting only, and never the identical text: that would be a redraw, not an edit.
     if (!sc.key.startsWith(`${S.pack.id}|${S.strict ? 1 : 0}|`) || sc.text === text || sc.status !== 'done' || !sc.lines.length || wanted.has(sc.key) || sc.key.endsWith('|old')) continue;
-    // Share of the shorter text's words found in the other, so adding or cutting a sentence still counts as the same paragraph.
-    const was = words(sc.text), small = Math.min(now.size, was.size); if (small < 3) continue;
-    let same = 0; for (const w of now) if (was.has(w)) same++;
-    const score = same / small;
+    const score = alike(text, sc.text);
     if (score >= 0.6 && (score > top || (score === top && sc.seq > best.seq))) { best = sc; top = score; }
   }
   return best;
@@ -393,10 +414,12 @@ function applyLine(sc, o) {
   if (shown) stage.upsert(o, true); else if (sceneFor(S.cur) === sc) showCurrent();
 }
 
-async function startScene(idx, text, key, fresh = false) {
+async function startScene(idx, text, key, { fresh = false, guide, from = null } = {}) {
   const sc = { key, idx, pack: S.pack.id, seq: ++S.seq, text, lines: [], raw: [], status: 'wait', t0: performance.now(), waitMs: 0, genStart: 0, chars: 0, ctrl: new AbortController(), shot: null };
   // An edit keeps the drawing it had: the scene starts as a copy and Kimi sends only what changes.
-  const base = fresh ? null : earlierVersion(text, new Set(S.paras.map((p) => keyOf(p.text))));
+  const base = from || (fresh ? null : earlierVersion(text, new Set(S.paras.map((p) => keyOf(p.text)))));
+  // A direction from the writer stays with the paragraph through later edits.
+  sc.guide = guide ?? base?.guide ?? ''; sc.updating = Boolean(base);
   if (base) {
     Object.assign(sc, { lines: base.lines.slice(), raw: base.raw.slice(), shot: base.shot, round: Math.min(base.round || 0, PLAN.length - 1) });
     stopImproving(base);
@@ -408,12 +431,13 @@ async function startScene(idx, text, key, fresh = false) {
     mode: S.pack.visual, style: STYLE_ORDER[S.styleIdx], strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'),
     cast: prev && !base ? prev.raw.filter((r) => r.includes('"t":"obj"') && !r.includes('"ghost":true')).slice(0, 5).join('\n') : '',
-    paragraph: text, fresh,
+    paragraph: text, fresh, guide: sc.guide,
     ...(base ? { update: true, before: base.text, scene: base.raw.join('\n') } : {}),
   };
   try {
     await sse('/api/scene', body, sc.ctrl.signal, (ev) => {
       if (ev.type === 'wait') sc.waitMs = ev.ms;
+      else if (ev.type === 'prompt') sc.prompt = ev.text;
       else if (ev.type === 'first') { sc.status = 'gen'; sc.waitMs = ev.waitMs; sc.genStart = performance.now(); sc.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
         const o = parseLine(ev.raw); if (!o) return;
@@ -428,18 +452,113 @@ async function startScene(idx, text, key, fresh = false) {
     for (const [k, v] of S.scenes) if (k.endsWith('|old') && v.idx === idx) S.scenes.delete(k);
     markDirty();
   }
-  renderPages(); schedule();
+  renderPages();
+  // Mid-typing, the pause timer sends the follow-up; otherwise the edit made during the wait goes out now.
+  if (performance.now() - lastEdit >= SCENE_PAUSE) schedule();
 }
 
 // Draws the current scene again. The old drawing stays on screen until the new one starts arriving.
 function redraw() {
   const p = S.paras[S.cur]; if (!p || p.text.length < 12) return;
-  const key = keyOf(p.text), old = S.scenes.get(key);
+  const key = keyOf(p.text); let old = S.scenes.get(key);
   if (old && flying(old)) return;
+  if (old?.status === 'cancelled' && !old.lines.length) old = null;
   stopImproving(old);
   if (old) { S.scenes.delete(key); if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); } }
-  startScene(S.cur, p.text, key, true); renderPages();
+  startScene(S.cur, p.text, key, { fresh: true, guide: old?.guide }); renderPages();
 }
+
+// ---------- guide ----------
+// The writer tells the illustrator what to change. A request still in the queue for this paragraph is
+// replaced, because the direction changes what it should draw; a finished drawing is updated in place.
+function guideScene(idx, guide) {
+  const p = S.paras[idx]; if (!p || p.text.length < 12) return;
+  const key = keyOf(p.text), wanted = new Set(S.paras.map((x) => keyOf(x.text)));
+  for (const sc of [...S.scenes.values()]) if (flying(sc) && (sc.key === key || (sc.idx === idx && !wanted.has(sc.key)))) { sc.ctrl.abort(); S.scenes.delete(sc.key); }
+  const old = S.scenes.get(key); let from = null;
+  if (old) {
+    stopImproving(old); S.scenes.delete(key);
+    if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); from = old; }
+  }
+  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from }); renderPages();
+}
+let guideIdx = 0;
+function openGuide(idx) {
+  guideIdx = idx; const sc = activeFor(idx) || sceneFor(idx);
+  $('#guideTitle').textContent = S.paras.length > 1 ? `Guide scene ${idx + 1}` : 'Guide this drawing';
+  $('#guideText').value = sc?.guide || ''; $('#guideDlg').showModal(); $('#guideText').focus();
+}
+$('#guideBtn').onclick = () => openGuide(S.cur);
+$('#guideText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#guideForm').requestSubmit(); } });
+$('#guideForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(guideIdx, $('#guideText').value); $('#guideDlg').close(); });
+
+// ---------- queue ----------
+// Everything that is waiting for the model, with the prompt that was sent, and a way to cancel it,
+// resend it with the current text, or resend a drawing with a direction.
+let qSeq = 0, queueSig = ''; const qIds = new WeakMap();
+const qId = (o) => { if (!qIds.has(o)) qIds.set(o, ++qSeq); return qIds.get(o); };
+function queueItems() {
+  const c = S.coach, items = [], wanted = new Set(S.paras.map((p) => keyOf(p.text)));
+  for (const sc of S.scenes.values()) {
+    if (flying(sc)) { const stale = !wanted.has(sc.key); items.push({ o: sc, kind: 'scene', title: `Scene ${sc.idx + 1}`, sub: [sc.updating ? 'update' : 'new drawing', stale ? 'older wording' : '', sc.guide ? 'guided' : ''].filter(Boolean).join(' · '), text: sc.text, stale }); }
+    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: `improving ${imp.focus}`, text: sc.text });
+  }
+  for (const r of c.runs.values()) { const stale = r.text !== ta.value; items.push({ o: r, kind: 'coach', title: 'Review', sub: stale ? 'older draft' : '', text: r.text, stale }); }
+  if (c.factBusy) items.push({ o: c.factBusy, kind: 'facts', title: 'Fact check', sub: '', text: c.factBusy.quotes.join(' · ') });
+  for (const r of c.research) if (['search', 'wait', 'gen'].includes(r.status)) items.push({ o: r, kind: 'research', title: 'Research', sub: '', text: r.q });
+  return items;
+}
+function renderQueue() {
+  const items = queueItems(), box = $('#queue');
+  $('#queueBtn').innerHTML = items.length ? `Queue<i>${items.length}</i>` : 'Queue';
+  if (!$('#queueDlg').open) { queueSig = ''; return; }
+  $('#queueEmpty').hidden = items.length > 0;
+  const sig = items.map((it) => `${qId(it.o)}${it.o.status === 'gen' ? 'g' : 'w'}${it.stale ? 's' : ''}${it.o.prompt ? 'p' : ''}`).join(',');
+  if (sig !== queueSig) {
+    queueSig = sig;
+    // Rebuilding must not lose a direction that is being typed or close an open prompt.
+    const typed = new Map([...box.querySelectorAll('input')].map((el) => [el.closest('.q').dataset.id, el.value]));
+    const open = new Set([...box.querySelectorAll('details[open]')].map((el) => el.closest('.q').dataset.id));
+    const focus = document.activeElement?.closest?.('#queue .q')?.dataset.id;
+    box.innerHTML = items.map((it) => {
+      const id = String(qId(it.o));
+      return `<div class="q" data-id="${id}"><div class="q-head"><b>${esc(it.title)}</b><span>${esc(it.sub)}</span><span class="q-time"></span></div>`
+        + `<div class="q-text">${esc(it.text)}</div>`
+        + (it.o.prompt ? `<details${open.has(id) ? ' open' : ''}><summary>Prompt sent (${it.o.prompt.length.toLocaleString()} characters)</summary><pre>${esc(it.o.prompt)}</pre></details>` : '')
+        + '<form class="q-acts">'
+        + (it.kind === 'scene' ? `<input class="field" maxlength="300" placeholder="Add a direction, e.g. set it at night" value="${esc(typed.get(id) || '')}"><button class="mini" data-act="guide">Resend</button>` : '<span class="gap"></span>')
+        + (it.stale ? '<button class="mini" data-act="refresh" type="button" title="Drop this request and send the text as it is now">Send current text</button>' : '')
+        + '<button class="mini bad" data-act="cancel" type="button">Cancel</button></form></div>';
+    }).join('');
+    if (focus) box.querySelector(`.q[data-id="${focus}"] input`)?.focus();
+  }
+  for (const it of items) {
+    const el = box.querySelector(`.q[data-id="${qId(it.o)}"] .q-time`); if (!el) continue;
+    const gen = it.o.status === 'gen'; el.classList.toggle('gen', gen);
+    el.textContent = gen ? 'answering now' : it.o.status === 'search' ? 'searching the web' : `in queue ${Math.round((performance.now() - it.o.t0) / 1000)}s`;
+  }
+}
+function queueAct(id, act, guide = '') {
+  const it = queueItems().find((x) => String(qId(x.o)) === id); if (!it) return;
+  const c = S.coach, o = it.o;
+  if (it.kind === 'scene') {
+    if (act === 'guide') { if (guide.trim()) guideScene(S.paras.some((p) => keyOf(p.text) === o.key) ? S.paras.findIndex((p) => keyOf(p.text) === o.key) : o.idx, guide); }
+    else {
+      o.ctrl.abort();
+      // A cancelled request for the text on the page stays cancelled until Redraw; an older wording is simply dropped.
+      if (act === 'cancel' && !it.stale) o.status = 'cancelled'; else S.scenes.delete(o.key);
+      if (act === 'refresh') schedule();
+    }
+    renderPages(); showCurrent();
+  } else if (it.kind === 'improve') { it.sc.round = PLAN.length; stopImproving(it.sc); markDirty(); }
+  else if (it.kind === 'coach') { o.ctrl.abort(); c.runs.delete(o.seq); if (act === 'refresh') runCoach(true); renderCoach(); }
+  else if (it.kind === 'facts') { o.abort(); c.factBusy = null; }
+  else if (it.kind === 'research') { o.ctrl.abort(); c.research = c.research.filter((r) => r !== o); renderResearch(); }
+  renderQueue();
+}
+$('#queueBtn').onclick = () => { $('#queueDlg').showModal(); renderQueue(); };
+$('#queue').addEventListener('click', (e) => { const b = e.target.closest('button[type="button"][data-act]'); if (b) queueAct(b.closest('.q').dataset.id, b.dataset.act); });
+$('#queue').addEventListener('submit', (e) => { e.preventDefault(); const q = e.target.closest('.q'); queueAct(q.dataset.id, 'guide', q.querySelector('input')?.value || ''); });
 
 // ---------- keep improving ----------
 // With the switch on, each finished scene goes back to Kimi in rounds. Round one sends three requests
@@ -480,7 +599,8 @@ async function improveOnce(sc, focus) {
   };
   try {
     await sse('/api/scene', body, imp.ctrl.signal, (ev) => {
-      if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
+      if (ev.type === 'prompt') imp.prompt = ev.text;
+      else if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
         const o = parseLine(ev.raw); if (!o || !['obj', 'many', 'env'].includes(o.t)) return;
         if (o.t === 'env') { if (focus !== 'setting') return; delete o.title; }
@@ -534,7 +654,7 @@ $('#hud').onclick = () => {
 };
 
 function tick() {
-  const act = activeFor(S.cur), sc = act || S.shown; let big = '', small = '', cls = '', tip = '';
+  const act = activeFor(S.cur) || [...S.scenes.values()].find((x) => flying(x) && x.idx === S.cur && !x.key.endsWith('|old')), sc = act || S.shown; let big = '', small = '', cls = '', tip = '';
   if (sc?.status === 'wait') { cls = 'wait'; big = `${Math.round((performance.now() - sc.t0) / 1000)}s`; small = 'in the Cerebras queue'; }
   else if (sc?.status === 'gen') {
     const secs = Math.max(0.05, (performance.now() - sc.genStart) / 1000); cls = 'gen';
@@ -546,6 +666,7 @@ function tick() {
   } else if (sc?.status === 'done' && sc.done) {
     if (sc.cached) small = 'replayed from cache';
     else { big = `≈${sc.done.tps}`; small = `tokens/s · ${(sc.done.genMs / 1000).toFixed(1)}s`; tip = `${sc.lines.length} lines in ${(sc.done.genMs / 1000).toFixed(1)}s after ${(sc.done.waitMs / 1000).toFixed(0)}s in the queue`; }
+  } else if (sc?.status === 'cancelled') { small = 'Cancelled. Press Redraw to send it again';
   } else if (sc?.status === 'error') { cls = 'err'; big = '!'; small = 'Scene failed. Click to retry'; tip = sc.error || ''; }
   const next = nextToImprove(); if (next) improveRound(next);
   const hud = $('#hud'); hud.hidden = !big && !small; hud.className = 'overlay top-right hud ' + cls; hud.title = tip;
@@ -557,7 +678,9 @@ function tick() {
     : waiting.length ? `in queue ${Math.round((performance.now() - Math.min(...waiting.map((r) => r.t0))) / 1000)}s` : S.coach.factBusy ? 'checking facts…' : '';
   $('#reviewBtn').disabled = runs.length > 0 || ta.value.trim().length < 3;
   researchStatus();
-  $('#redrawBtn').disabled = !S.shown?.lines.length || Boolean(act && flying(act));
+  const drawable = (S.paras[S.cur]?.text.length || 0) >= 12;
+  $('#redrawBtn').disabled = !drawable || Boolean(act && flying(act)); $('#guideBtn').disabled = !drawable;
+  renderQueue();
 }
 
 // ---------- coach ----------
@@ -637,7 +760,8 @@ async function runCoach(force = false) {
   c.runs.set(run.seq, run); renderCoach();
   try {
     await sse('/api/coach', { pack: S.pack.id, text, fresh: Boolean(reviewed) }, run.ctrl.signal, (ev) => {
-      if (ev.type === 'first') run.status = 'gen';
+      if (ev.type === 'prompt') run.prompt = ev.text;
+      else if (ev.type === 'first') run.status = 'gen';
       else if (ev.type === 'line') { const o = parseLine(ev.raw); if (!o) return; if (o.k === 'check') run.checks.push(o); else { run.lines.push(o); coachLine(run, o); } }
       else if (ev.type === 'done') run.status = 'done';
       else if (ev.type === 'error') run.status = 'error';
@@ -658,10 +782,12 @@ async function checkFacts(run) {
   const known = new Set(c.factRuns.flatMap((fr) => fr.quotes.map((q) => q.toLowerCase())));
   const fresh = run.checks.filter((x) => x.quote && x.query && has(x.quote) && !known.has(String(x.quote).toLowerCase())).slice(0, 3);
   if (!fresh.length || c.factBusy) return;
-  const ctrl = new AbortController(); c.factBusy = ctrl; const fr = { quotes: fresh.map((x) => x.quote), lines: [] }; let ok = false;
+  const ctrl = new AbortController(); Object.assign(ctrl, { t0: performance.now(), status: 'wait', quotes: fresh.map((x) => x.quote) }); c.factBusy = ctrl; const fr = { quotes: fresh.map((x) => x.quote), lines: [] }; let ok = false;
   try {
     await sse('/api/facts', { pack: run.pack, text: run.text, checks: fresh }, ctrl.signal, (ev) => {
-      if (ev.type === 'line') { const o = parseLine(ev.raw); if (!o) return; fr.lines.push(o); if (o.k !== 'fact' || has(o.quote)) show(o); }
+      if (ev.type === 'prompt') ctrl.prompt = ev.text;
+      else if (ev.type === 'first') ctrl.status = 'gen';
+      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (!o) return; fr.lines.push(o); if (o.k !== 'fact' || has(o.quote)) show(o); }
       else if (ev.type === 'done') ok = true;
     });
   } catch { /* aborted or failed */ }
@@ -754,7 +880,8 @@ async function ask(q) {
   c.research.unshift(r); renderResearch();
   try {
     await sse('/api/ask', { pack: S.pack.id, text: ta.value, ask: q }, r.ctrl.signal, (ev) => {
-      if (ev.type === 'sources') { r.sources = ev.sources || []; r.status = 'wait'; }
+      if (ev.type === 'prompt') r.prompt = ev.text;
+      else if (ev.type === 'sources') { r.sources = ev.sources || []; r.status = 'wait'; }
       else if (ev.type === 'first') r.status = 'gen';
       else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o) r.lines.push(o); }
       else if (ev.type === 'done') r.status = 'done';

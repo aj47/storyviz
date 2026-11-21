@@ -110,6 +110,8 @@ const promptHash = (agent) => {
 // Returns { lines, done } (the caller sends `done` and ends the response), or null after an error.
 async function runAgent(res, send, agent, userText, { maxTokens = 6000, charsPerToken = 3.4, useCache = true, shape = (l) => l } = {}) {
   const forward = (line, ms) => { const out = shape(line); if (out) send({ type: 'line', raw: out, ms }); };
+  // The page can show the writer exactly what is waiting in the queue.
+  send({ type: 'prompt', text: userText });
   // Identical requests replay from disk, clearly marked as cached, so reloads and retakes are instant.
   const cacheFile = path.join(CACHE, crypto.createHash('sha1').update(agent + promptHash(agent) + '\n' + userText).digest('hex') + '.json');
   if (useCache && fs.existsSync(cacheFile)) {
@@ -327,6 +329,7 @@ function sceneRequest(b) {
     parts.unshift('task: update');
     parts.push(`the paragraph before the edit:\n"""\n${String(b.before || '').slice(0, 2500)}\n"""`, `scene on screen now, drawn for the paragraph before the edit:\n${String(b.scene || '').slice(0, 24000)}`);
   }
+  if (b.guide) parts.push(`direction from the writer:\n"""\n${String(b.guide).slice(0, 300)}\n"""`);
   if (b.improve) {
     parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish'].includes(b.focus) ? b.focus : 'polish'}`);
     parts.push(`scene on screen now:\n${String(b.scene || '').slice(0, 24000)}`);

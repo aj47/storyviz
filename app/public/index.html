@@ -17,6 +17,7 @@
   </div>
   <button class="save" id="saveBtn" title="Save now (⌘S)"></button>
   <span class="grow"></span>
+  <button class="quiet" id="queueBtn" title="See what is waiting for the model, and cancel or resend it">Queue</button>
   <button class="quiet" id="openBtn" title="Open a project (⌘O)">Open</button>
   <button class="solid" id="newBtn">New</button>
 </header>
@@ -48,6 +49,7 @@
         <label class="sw" title="Switch to a new visual style every 7 seconds"><input type="checkbox" id="restyleSw"><i></i>Restyle</label>
         <label class="sw" title="Keep redrawing each scene with more detail, setting and background, up to four passes"><input type="checkbox" id="improveSw"><i></i>Keep improving</label>
         <label class="sw" title="On: the model imagines whatever the text leaves out. Off: only what you wrote is drawn, and anything vague shows as a pale ghost or a ? box."><input type="checkbox" id="fillSw"><i></i>Fill gaps</label>
+        <button id="guideBtn" title="Tell the illustrator what to change in this drawing">Guide</button>
         <button id="redrawBtn" title="Draw this scene again">Redraw</button>
       </div>
       <div class="pages" id="pages"></div>
@@ -103,6 +105,21 @@
   <div class="types" id="newTypes"></div>
   <h3 id="projListHead">Open a project</h3>
   <div class="list" id="projList"></div>
+</dialog>
+
+<dialog id="queueDlg">
+  <div class="dlg-head"><h2>Queue</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <p class="empty" id="queueEmpty">Nothing is waiting.</p>
+  <div id="queue"></div>
+</dialog>
+
+<dialog id="guideDlg">
+  <div class="dlg-head"><h2 id="guideTitle">Guide this drawing</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <form id="guideForm" class="ask">
+    <textarea id="guideText" class="field" rows="3" maxlength="300" spellcheck="false" placeholder="What should change? e.g. set it at night, or show the server room instead of the people"></textarea>
+    <button class="solid">Send</button>
+  </form>
+  <p class="empty">The direction stays with this scene through later edits. Send it empty to remove it.</p>
 </dialog>
 
 <dialog id="rulesDlg">

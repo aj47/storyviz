@@ -73,6 +73,10 @@ A request with "task: update" means the writer edited a paragraph whose scene is
 
 Keep everything the paragraph still supports, including setting and background that earlier improve passes added. If the edit changed nothing you can see, output the scene's env line unchanged and nothing else. If the paragraph is now about something else entirely, output {"t":"reset"} first and then draw the whole scene from the start.
 
+## Direction from the writer
+
+A request may end with "direction from the writer": a short instruction about the picture, such as "set it at night" or "show the server room, not the people". Follow it. It overrides your own choices about setting, framing, mood, colour and what to emphasise, but it never replaces the paragraph: still draw what the paragraph says. In an update task where the paragraph did not change, the direction is the edit: change the scene to follow it and output only those changes.
+
 ## Improve task
 
 A request with "task: improve" gives you the scene that is already on screen, as its JSONL lines, and a focus. Your job is to make the picture richer and better looking. The app applies your lines on top of the existing scene, and other passes with a different focus run at the same time, so output only what your focus asks for.
