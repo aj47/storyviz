@@ -9,9 +9,9 @@ const flag = (k, d) => { const v = store.get(k); return v == null ? d : v === '1
 
 const S = {
   packs: [], pack: null, project: null, projects: [],
-  strict: flag('strict', true), restyle: flag('restyle', true), live: flag('live', true), styleIdx: 0,
+  strict: !flag('fill', true), restyle: flag('restyle', true), live: flag('live', true), improve: flag('improve', true), styleIdx: 0,
   scenes: new Map(), seq: 0, cur: 0, shown: null, paras: [],
-  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null },
+  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null },
 };
 const tipEls = new WeakMap();
 
@@ -54,7 +54,7 @@ async function boot() {
   if (q.get('hold')) { const im = new Image(); im.hidden = true; im.src = '/api/hold?ms=' + Number(q.get('hold')); document.body.appendChild(im); }
   if (q.get('style') || q.has('nocycle')) S.restyle = false;
   setStyle(Math.max(0, STYLE_ORDER.indexOf(q.get('style') || store.get('style'))));
-  $('#restyleSw').checked = S.restyle; $('#fillSw').checked = !S.strict; $('#liveSw').checked = S.live;
+  $('#restyleSw').checked = S.restyle; $('#improveSw').checked = S.improve; $('#fillSw').checked = !S.strict; $('#liveSw').checked = S.live;
   buildMenus();
 
   const want = (location.hash.match(/p=([a-z0-9]+)/) || [])[1] || store.get('last');
@@ -96,11 +96,11 @@ function loadProject(p) {
   S.project = p; S.pack = packById(p.pack);
   store.set('last', p.id); history.replaceState(null, '', location.pathname + location.search + '#p=' + p.id);
   setName(p.name); setSaveState('saved');
-  for (const sc of S.scenes.values()) sc.ctrl?.abort();
+  for (const sc of S.scenes.values()) { sc.ctrl?.abort(); stopImproving(sc); }
   S.scenes.clear();
   for (const s of p.scenes || []) {
-    const lines = (s.raw || []).map(parseLine).filter(Boolean); if (!lines.length) continue;
-    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw: s.raw, status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
+    const raw = (s.raw || []).filter((r) => parseLine(r)), lines = raw.map(parseLine); if (!lines.length) continue;
+    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
   applyPack(); restoreCoach(p.coach);
@@ -144,7 +144,7 @@ function snapshot(p) {
   const kept = new Map();
   S.paras.forEach((para, i) => {
     const sc = S.scenes.get(keyOf(para.text));
-    if (sc && sc.status === 'done' && sc.raw.length && !kept.has(sc.key)) kept.set(sc.key, { key: sc.key, idx: i, text: para.text, raw: sc.raw });
+    if (sc && sc.status === 'done' && sc.raw.length && !kept.has(sc.key)) kept.set(sc.key, { key: sc.key, idx: i, text: para.text, raw: sc.raw, round: sc.round || 0 });
   });
   p.scenes = [...kept.values()];
 }
@@ -250,11 +250,12 @@ function setStyle(i) {
 }
 function setRestyle(on) { S.restyle = on; store.set('restyle', on ? '1' : '0'); $('#restyleSw').checked = on; }
 $('#restyleSw').onchange = (e) => setRestyle(e.target.checked);
-$('#fillSw').onchange = (e) => { S.strict = !e.target.checked; store.set('strict', S.strict ? '1' : '0'); schedule(); };
+$('#fillSw').onchange = (e) => { S.strict = !e.target.checked; store.set('fill', S.strict ? '0' : '1'); schedule(); };
 $('#liveSw').onchange = (e) => {
   S.live = e.target.checked; store.set('live', S.live ? '1' : '0');
   clearTimeout(coachTimer); if (S.live) runCoach(); renderCoach();
 };
+$('#improveSw').onchange = (e) => { S.improve = e.target.checked; store.set('improve', S.improve ? '1' : '0'); if (!S.improve) stopImproving(); };
 $('#reviewBtn').onclick = () => runCoach(true);
 $('#redrawBtn').onclick = () => redraw();
 $('#sampleBtn').onclick = () => { ta.value = S.pack.placeholder || ''; ta.focus(); ta.setSelectionRange(0, 0); onText(true); };
@@ -271,7 +272,8 @@ function onText(immediate = false, changed = true) {
   renderCoach();
 }
 function moved(force = false) { if (syncCurrent() || force) { renderBackdrop(); renderPages(); showCurrent(); } }
-ta.addEventListener('input', () => onText());
+let lastEdit = 0;
+ta.addEventListener('input', () => { lastEdit = performance.now(); onText(); });
 ta.addEventListener('scroll', () => { $('#backdrop').scrollTop = ta.scrollTop; });
 for (const ev of ['keyup', 'click', 'focus']) ta.addEventListener(ev, () => moved());
 
@@ -341,6 +343,7 @@ function schedule() {
   const queued = [...S.scenes.values()].filter((sc) => sc.status === 'wait' && !wanted.has(sc.key));
   const byIdx = new Map(); queued.forEach((sc) => { if (!byIdx.has(sc.idx)) byIdx.set(sc.idx, []); byIdx.get(sc.idx).push(sc); });
   for (const list of byIdx.values()) { list.sort((a, b) => a.seq - b.seq); list.slice(1).forEach((sc) => { sc.ctrl.abort(); S.scenes.delete(sc.key); }); }
+  if (improving && !wanted.has(improving.key)) stopImproving();
   let live = [...S.scenes.values()].filter(flying).length;
   for (const i of order) {
     const p = S.paras[i]; if (!p || p.text.length < 12) continue;
@@ -351,15 +354,58 @@ function schedule() {
   renderPages(); showCurrent();
 }
 
+// The drawing an edited paragraph had before the edit: the closest earlier text of this writing type.
+function earlierVersion(text, wanted) {
+  const words = (t) => new Set(t.toLowerCase().match(/[a-z0-9']+/g) || []); const now = words(text); let best = null, top = 0;
+  for (const sc of S.scenes.values()) {
+    // Same writing type and same Fill gaps setting only, and never the identical text: that would be a redraw, not an edit.
+    if (!sc.key.startsWith(`${S.pack.id}|${S.strict ? 1 : 0}|`) || sc.text === text || sc.status !== 'done' || !sc.lines.length || wanted.has(sc.key) || sc.key.endsWith('|old')) continue;
+    // Share of the shorter text's words found in the other, so adding or cutting a sentence still counts as the same paragraph.
+    const was = words(sc.text), small = Math.min(now.size, was.size); if (small < 3) continue;
+    let same = 0; for (const w of now) if (was.has(w)) same++;
+    const score = same / small;
+    if (score >= 0.6 && (score > top || (score === top && sc.seq > best.seq))) { best = sc; top = score; }
+  }
+  return best;
+}
+
+// One place where a line from Kimi changes a scene, whether it is a first drawing, an update or an improvement.
+function applyLine(sc, o) {
+  const shown = S.shown === sc;
+  if (o.t === 'reset') { sc.lines = []; sc.raw = []; sc.shot = null; sc.round = 0; if (shown) { stage.clear(); $('#title').textContent = ''; showShot(null); } return; }
+  if (o.t === 'drop') {
+    const id = String(o.id), keep = sc.lines.map((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id)));
+    sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
+    if (shown) stage.drop(id);
+    return;
+  }
+  let at = -1;
+  if (o.t === 'obj' && o.id != null) at = sc.lines.findIndex((l) => l.t === 'obj' && String(l.id) === String(o.id));
+  else if (o.t === 'env' || o.t === 'shot') at = sc.lines.findIndex((l) => l.t === o.t);
+  if (o.t === 'env' && at >= 0) o = { ...sc.lines[at], ...o };
+  const raw = JSON.stringify(o);
+  if (at >= 0) { sc.lines[at] = o; sc.raw[at] = raw; } else { sc.lines.push(o); sc.raw.push(raw); }
+  if (o.t === 'shot') sc.shot = o;
+  if (shown) stage.upsert(o, true); else if (sceneFor(S.cur) === sc) showCurrent();
+}
+
 async function startScene(idx, text, key, fresh = false) {
   const sc = { key, idx, pack: S.pack.id, seq: ++S.seq, text, lines: [], raw: [], status: 'wait', t0: performance.now(), waitMs: 0, genStart: 0, chars: 0, ctrl: new AbortController(), shot: null };
+  // An edit keeps the drawing it had: the scene starts as a copy and Kimi sends only what changes.
+  const base = fresh ? null : earlierVersion(text, new Set(S.paras.map((p) => keyOf(p.text))));
+  if (base) {
+    Object.assign(sc, { lines: base.lines.slice(), raw: base.raw.slice(), shot: base.shot, round: Math.min(base.round || 0, PLAN.length - 1) });
+    stopImproving(base);
+    if (S.shown === base) S.shown = sc;
+  }
   S.scenes.set(key, sc);
   const prev = idx > 0 ? sceneFor(idx - 1) : null;
   const body = {
     mode: S.pack.visual, style: STYLE_ORDER[S.styleIdx], strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'),
-    cast: prev ? prev.raw.filter((r) => r.includes('"t":"obj"') && !r.includes('"ghost":true')).slice(0, 5).join('\n') : '',
+    cast: prev && !base ? prev.raw.filter((r) => r.includes('"t":"obj"') && !r.includes('"ghost":true')).slice(0, 5).join('\n') : '',
     paragraph: text, fresh,
+    ...(base ? { update: true, before: base.text, scene: base.raw.join('\n') } : {}),
   };
   try {
     await sse('/api/scene', body, sc.ctrl.signal, (ev) => {
@@ -367,9 +413,8 @@ async function startScene(idx, text, key, fresh = false) {
       else if (ev.type === 'first') { sc.status = 'gen'; sc.waitMs = ev.waitMs; sc.genStart = performance.now(); sc.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
         const o = parseLine(ev.raw); if (!o) return;
-        sc.lines.push(o); sc.raw.push(ev.raw); sc.chars += ev.raw.length; if (o.t === 'shot') sc.shot = o;
-        if (sceneFor(S.cur) === sc) { if (S.shown === sc) stage.addLine(o, true); else showCurrent(); }
-        renderPages();
+        if ((o.t === 'reset' || o.t === 'drop') && !base) return;
+        sc.chars += ev.raw.length; applyLine(sc, o); renderPages();
       } else if (ev.type === 'done') { sc.status = 'done'; sc.done = ev; }
       else if (ev.type === 'error') { sc.status = 'error'; sc.error = ev.message; }
     });
@@ -387,8 +432,60 @@ function redraw() {
   const p = S.paras[S.cur]; if (!p || p.text.length < 12) return;
   const key = keyOf(p.text), old = S.scenes.get(key);
   if (old && flying(old)) return;
+  stopImproving(old);
   if (old) { S.scenes.delete(key); if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); } }
   startScene(S.cur, p.text, key, true); renderPages();
+}
+
+// ---------- keep improving ----------
+// With the switch on, each finished scene goes back to Kimi in rounds. Round one sends three requests
+// at once, each with its own focus, so the wait in the queue is paid once; the later rounds polish.
+const PLAN = [['subject', 'setting', 'background'], ['polish'], ['polish'], ['polish']];
+let improving = null;
+const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
+function nextToImprove() {
+  if (!S.improve || improving || !S.pack || S.pack.visual === 'diagram' || document.hidden) return null;
+  if (performance.now() - lastEdit < 2500 || [...S.scenes.values()].some(flying)) return null;
+  const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
+  for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && (sc.round || 0) < PLAN.length && !sc.impError) return sc; }
+  return null;
+}
+async function improveRound(sc) {
+  improving = sc; sc.imps = [];
+  const round = sc.round || 0;
+  const results = await Promise.all(PLAN[round].map((focus) => improveOnce(sc, focus)));
+  sc.imps = null; improving = null;
+  if (results.includes('aborted')) return;
+  if (results.every((r) => r === 'error')) sc.impError = true;
+  // A round that changed nothing means Kimi has nothing left to add.
+  else { sc.round = results.some((r) => r > 0) ? round + 1 : PLAN.length; markDirty(); }
+  renderPages();
+}
+async function improveOnce(sc, focus) {
+  const imp = { focus, status: 'wait', t0: performance.now(), genStart: 0, chars: 0, n: 0, ctrl: new AbortController() };
+  sc.imps.push(imp);
+  const idx = Math.max(0, S.paras.findIndex((p) => keyOf(p.text) === sc.key)); let ok = false;
+  // Passes run side by side, so a new object gets its focus as a prefix and two passes can never claim one id.
+  const had = new Set(sc.lines.filter((l) => l.t === 'obj' && l.id != null).map((l) => String(l.id))), renamed = new Map();
+  const body = {
+    mode: S.pack.visual, strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
+    context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'), paragraph: sc.text,
+    improve: true, focus, scene: sc.raw.join('\n'),
+  };
+  try {
+    await sse('/api/scene', body, imp.ctrl.signal, (ev) => {
+      if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
+      else if (ev.type === 'line') {
+        const o = parseLine(ev.raw); if (!o || !['obj', 'many', 'env'].includes(o.t)) return;
+        if (o.t === 'env') { if (focus !== 'setting') return; delete o.title; }
+        else if (o.t === 'obj' && o.id != null && !had.has(String(o.id))) { const id = `${focus}_${o.id}`; renamed.set(String(o.id), id); o.id = id; }
+        else if (o.t === 'many' && renamed.has(String(o.of))) o.of = renamed.get(String(o.of));
+        imp.chars += ev.raw.length; imp.n++; applyLine(sc, o);
+      } else if (ev.type === 'done') { ok = true; if (!ev.cached) { sc.done = ev; sc.cached = false; } }
+    });
+  } catch { /* aborted or failed */ }
+  imp.status = 'over';
+  return imp.ctrl.signal.aborted ? 'aborted' : ok ? imp.n : 'error';
 }
 
 function parseLine(raw) {
@@ -416,7 +513,7 @@ function renderPages() {
   const html = S.paras.map((p, i) => {
     const sc = sceneFor(i), act = activeFor(i); const shot = sc?.shot; if (shot?.sec) total += Number(shot.sec) || 0;
     const label = shot && i === S.cur ? `${i + 1} · ${esc(shot.beat || 'beat')}${shot.sec ? ' ' + shot.sec + 's' : ''}` : String(i + 1);
-    return `<button data-i="${i}" class="${i === S.cur ? 'on' : ''} ${sc?.lines.length ? 'ready' : ''} ${act && flying(act) ? 'busy' : ''}">${label}</button>`;
+    return `<button data-i="${i}" class="${i === S.cur ? 'on' : ''} ${sc?.lines.length ? 'ready' : ''} ${act && (flying(act) || act.imps) ? 'busy' : ''}">${label}</button>`;
   }).join('') + (total ? `<span class="total">${total}s</span>` : '');
   $('#pages').innerHTML = S.paras.length > 1 || total ? html : '';
 }
@@ -436,17 +533,22 @@ function tick() {
   else if (sc?.status === 'gen') {
     const secs = Math.max(0.05, (performance.now() - sc.genStart) / 1000); cls = 'gen';
     if (sc.cached) small = 'replaying'; else { big = `≈${Math.round(sc.chars / 1.85 / secs)}`; small = 'tokens/s'; }
+  } else if (sc?.status === 'done' && sc.imps?.some((i) => i.status !== 'over')) {
+    const gen = sc.imps.find((i) => i.status === 'gen'), waiting = sc.imps.filter((i) => i.status === 'wait');
+    if (gen) { cls = 'gen'; const secs = Math.max(0.05, (performance.now() - gen.genStart) / 1000); if (!gen.cached) big = `≈${Math.round(gen.chars / 1.85 / secs)}`; small = `${gen.cached ? '' : 'tokens/s · '}adding ${gen.focus}`; }
+    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · improving (${waiting.map((i) => i.focus).join(', ')})`; }
   } else if (sc?.status === 'done' && sc.done) {
     if (sc.cached) small = 'replayed from cache';
     else { big = `≈${sc.done.tps}`; small = `tokens/s · ${(sc.done.genMs / 1000).toFixed(1)}s`; tip = `${sc.lines.length} lines in ${(sc.done.genMs / 1000).toFixed(1)}s after ${(sc.done.waitMs / 1000).toFixed(0)}s in the queue`; }
   } else if (sc?.status === 'error') { cls = 'err'; big = '!'; small = 'Scene failed. Click to retry'; tip = sc.error || ''; }
+  const next = nextToImprove(); if (next) improveRound(next);
   const hud = $('#hud'); hud.hidden = !big && !small; hud.className = 'overlay top-right hud ' + cls; hud.title = tip;
   $('#hudBig').textContent = big; $('#hudSmall').textContent = small;
 
   const runs = [...S.coach.runs.values()];
   const waiting = runs.filter((r) => r.status === 'wait');
-  $('#coachStatus').textContent = runs.some((r) => r.phase === 'facts') ? 'checking facts on Wikipedia…' : runs.some((r) => r.status === 'gen') ? 'reading…'
-    : waiting.length ? `in queue ${Math.round((performance.now() - Math.min(...waiting.map((r) => r.t0))) / 1000)}s` : '';
+  $('#coachStatus').textContent = runs.some((r) => r.status === 'gen') ? 'reading…'
+    : waiting.length ? `in queue ${Math.round((performance.now() - Math.min(...waiting.map((r) => r.t0))) / 1000)}s` : S.coach.factBusy ? 'checking facts…' : '';
   $('#reviewBtn').disabled = runs.length > 0 || ta.value.trim().length < 3;
   $('#redrawBtn').disabled = !S.shown?.lines.length || Boolean(act && flying(act));
 }
@@ -483,11 +585,11 @@ function renderCoach() {
   empty.textContent = c.runs.size ? 'Reading your draft…'
     : c.shownSeq ? 'No tips left. Keep writing.'
     : ta.value.trim().length < 3 ? 'Write a few lines and the coach will read them.'
-    : S.live ? 'The coach reads your draft each time you pause.' : 'Keep improving is off. Press Review when you want notes.';
+    : S.live ? 'The coach reads your draft each time you pause.' : 'Auto review is off. Press Review when you want notes.';
 }
 
 function resetCoach() {
-  const c = S.coach; c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear();
+  const c = S.coach; c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear(); c.factBusy?.abort(); c.factBusy = null; c.factRuns = [];
   Object.assign(c, { tips: [], good: [], hot: null, shownSeq: 0, states: {}, saved: null, allTips: false });
   for (const id of ['scores', 'verdict', 'tips', 'good', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
   $('#scores').hidden = true; $('#verdict').hidden = true; layoutTips();
@@ -498,6 +600,8 @@ function restoreCoach(saved) {
   if (!saved || saved.pack !== S.pack.id || !Array.isArray(saved.lines)) return;
   const c = S.coach; const run = { seq: ++c.seq, pack: saved.pack };
   for (const o of saved.lines) { if ((o.k === 'tip' || o.k === 'fact') && findQuote(ta.value, o.quote) < 0) continue; coachLine(run, o); }
+  const facts = saved.lines.filter((o) => o.k === 'fact' || o.k === 'detail');
+  if (facts.length) c.factRuns = [{ quotes: facts.filter((o) => o.k === 'fact').map((o) => o.quote), lines: facts }];
   c.shownSeq = run.seq; c.saved = saved; renderCoach();
 }
 function renderStages() {
@@ -521,13 +625,12 @@ async function runCoach(force = false) {
   if ([...c.runs.values()].some((r) => r.text === text && r.pack === S.pack.id)) return;
   const waiting = [...c.runs.values()].filter((r) => r.status === 'wait').sort((a, b) => a.seq - b.seq);
   waiting.slice(1).forEach((r) => { r.ctrl.abort(); c.runs.delete(r.seq); });
-  const run = { seq: ++c.seq, text, pack: S.pack.id, project: S.project?.id, status: 'wait', t0: performance.now(), ctrl: new AbortController(), lines: [] };
+  const run = { seq: ++c.seq, text, pack: S.pack.id, project: S.project?.id, status: 'wait', t0: performance.now(), ctrl: new AbortController(), lines: [], checks: [] };
   c.runs.set(run.seq, run); renderCoach();
   try {
     await sse('/api/coach', { pack: S.pack.id, text, fresh: Boolean(reviewed) }, run.ctrl.signal, (ev) => {
       if (ev.type === 'first') run.status = 'gen';
-      else if (ev.type === 'phase') run.phase = ev.name;
-      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o) { run.lines.push(o); coachLine(run, o); } }
+      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (!o) return; if (o.k === 'check') run.checks.push(o); else { run.lines.push(o); coachLine(run, o); } }
       else if (ev.type === 'done') run.status = 'done';
       else if (ev.type === 'error') run.status = 'error';
     });
@@ -535,8 +638,28 @@ async function runCoach(force = false) {
   c.runs.delete(run.seq);
   if (run.status === 'done' && run.seq >= c.shownSeq && run.project === S.project?.id && run.pack === S.pack.id) {
     c.saved = { text: run.text, pack: run.pack, lines: run.lines }; markDirty();
+    checkFacts(run);
   }
   renderCoach();
+}
+
+// Fact checks run after the tips, on their own request, and only for claims that were not checked before.
+async function checkFacts(run) {
+  const c = S.coach; const has = (q) => findQuote(ta.value, q) >= 0; const show = (o) => { coachLine({ seq: c.shownSeq, pack: run.pack }, o); c.saved?.lines.push(o); };
+  for (const fr of c.factRuns) { const alive = fr.quotes.some(has); for (const o of fr.lines) if (o.k === 'fact' ? has(o.quote) : alive) show(o); }
+  const known = new Set(c.factRuns.flatMap((fr) => fr.quotes.map((q) => q.toLowerCase())));
+  const fresh = run.checks.filter((x) => x.quote && x.query && has(x.quote) && !known.has(String(x.quote).toLowerCase())).slice(0, 3);
+  if (!fresh.length || c.factBusy) return;
+  const ctrl = new AbortController(); c.factBusy = ctrl; const fr = { quotes: fresh.map((x) => x.quote), lines: [] }; let ok = false;
+  try {
+    await sse('/api/facts', { pack: run.pack, text: run.text, checks: fresh }, ctrl.signal, (ev) => {
+      if (ev.type === 'line') { const o = parseLine(ev.raw); if (!o) return; fr.lines.push(o); if (o.k !== 'fact' || has(o.quote)) show(o); }
+      else if (ev.type === 'done') ok = true;
+    });
+  } catch { /* aborted or failed */ }
+  if (c.factBusy !== ctrl) return;
+  c.factBusy = null;
+  if (ok) { c.factRuns.push(fr); markDirty(); }
 }
 
 function coachLine(run, o) {

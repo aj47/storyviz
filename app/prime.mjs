@@ -20,7 +20,7 @@ for (const f of fs.readdirSync(path.join(ROOT, 'packs'))) {
   const p = JSON.parse(fs.readFileSync(path.join(ROOT, 'packs', f), 'utf8'));
   if (only && p.id !== only) continue;
   const paras = paragraphs(p.placeholder || '');
-  paras.forEach((text, idx) => { if (text.length >= 12) jobs.push(() => run('/api/scene', { mode: p.visual, style: 'clay', strict: true, kind: p.name, index: idx, total: paras.length, context: paras.slice(0, idx).join('\n\n'), cast: '', paragraph: text }, `${p.id} scene ${idx + 1}`)); });
+  paras.forEach((text, idx) => { if (text.length >= 12) jobs.push(() => run('/api/scene', { mode: p.visual, style: 'clay', strict: false, kind: p.name, index: idx, total: paras.length, context: paras.slice(0, idx).join('\n\n'), cast: '', paragraph: text }, `${p.id} scene ${idx + 1}`)); });
   jobs.push(() => run('/api/coach', { pack: p.id, text: p.placeholder }, `${p.id} coach`));
 }
 const N = 6; let i = 0;

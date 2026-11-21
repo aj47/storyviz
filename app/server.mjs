@@ -225,25 +225,20 @@ function factRequest(pack, text, checks, sources) {
   ].join('\n\n');
 }
 
-async function streamCoach(res, pack, text, useCache) {
+// A separate request from the coach's, so a slow fact check never holds up the tips.
+async function streamFacts(res, pack, text, checks) {
   const send = openStream(res);
-  // "check" lines are instructions for the server, so they are not shown on the page.
-  const coach = await runAgent(res, send, 'coach', coachRequest(pack, text), { useCache, shape: (l) => (parseLine(l)?.k === 'check' ? null : l) });
-  if (!coach) { res.end(); return; }
-  const checks = coach.lines.map(parseLine).filter((o) => o?.k === 'check' && o.query && o.quote).slice(0, 3);
-  if (checks.length && !res.destroyed) {
-    send({ type: 'phase', name: 'facts' });
-    const sources = await research(checks);
-    // Kimi cites a source by number; the page gets its title and link instead.
-    const cite = (l) => {
-      const o = parseLine(l); if (!o || (o.k !== 'fact' && o.k !== 'detail')) return null;
-      const s = sources[Number(o.src) - 1]; delete o.src;
-      if (!s && (o.k === 'detail' || o.verdict !== 'unclear')) return null;
-      return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
-    };
-    if (sources.length && !res.destroyed) await runAgent(res, send, 'coach', factRequest(pack, text, checks, sources), { maxTokens: 3000, useCache, shape: cite });
-  }
-  send(coach.done); res.end();
+  const sources = checks.length ? await research(checks) : [];
+  // Kimi cites a source by number; the page gets its title and link instead.
+  const cite = (l) => {
+    const o = parseLine(l); if (!o || (o.k !== 'fact' && o.k !== 'detail')) return null;
+    const s = sources[Number(o.src) - 1]; delete o.src;
+    if (!s && (o.k === 'detail' || o.verdict !== 'unclear')) return null;
+    return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
+  };
+  const r = sources.length && !res.destroyed ? await runAgent(res, send, 'coach', factRequest(pack, text, checks, sources), { maxTokens: 3000, shape: cite }) : { done: { type: 'done', lines: 0 } };
+  if (r) send(r.done);
+  res.end();
 }
 
 function sceneRequest(b) {
@@ -254,6 +249,14 @@ function sceneRequest(b) {
   if (b.context) parts.push(`earlier paragraphs (for continuity only, do not draw them):\n${String(b.context).slice(-1500)}`);
   if (b.cast) parts.push(`cast from the previous scene (reuse an obj line unchanged if the same thing appears again):\n${String(b.cast).slice(0, 3500)}`);
   parts.push(`paragraph to draw:\n"""\n${String(b.paragraph || '').slice(0, 2500)}\n"""`);
+  if (b.update) {
+    parts.unshift('task: update');
+    parts.push(`the paragraph before the edit:\n"""\n${String(b.before || '').slice(0, 2500)}\n"""`, `scene on screen now, drawn for the paragraph before the edit:\n${String(b.scene || '').slice(0, 24000)}`);
+  }
+  if (b.improve) {
+    parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish'].includes(b.focus) ? b.focus : 'polish'}`);
+    parts.push(`scene on screen now:\n${String(b.scene || '').slice(0, 24000)}`);
+  }
   return parts.join('\n\n');
 }
 
@@ -300,7 +303,17 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const pack = loadPacks().find((p) => p.id === b.pack);
       if (!pack) { res.writeHead(400); res.end('unknown pack'); return; }
-      return streamCoach(res, pack, b.text || '', !b.fresh);
+      const send = openStream(res);
+      const r = await runAgent(res, send, 'coach', coachRequest(pack, b.text || ''), { useCache: !b.fresh });
+      if (r) send(r.done);
+      res.end(); return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/facts') {
+      const b = await readBody(req);
+      const pack = loadPacks().find((p) => p.id === b.pack);
+      if (!pack) { res.writeHead(400); res.end('unknown pack'); return; }
+      const checks = (Array.isArray(b.checks) ? b.checks : []).filter((c) => c && c.quote && c.query).slice(0, 3);
+      return streamFacts(res, pack, b.text || '', checks);
     }
     if (req.method === 'GET') {
       if (url.pathname.startsWith('/vendor/three/')) {

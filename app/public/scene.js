@@ -101,6 +101,19 @@ export class Stage {
   load(lines, pop = false) { this.clear(); lines.forEach((l, i) => this.addLine(l, pop, i * 45)); }
   get objectCount() { return this.count; }
 
+  // Apply a line from an improvement pass: an obj with a known id replaces that object where it
+  // stands, a new env replaces the old one, and anything else is added.
+  upsert(o, pop = true) {
+    if (!o || typeof o !== 'object') return;
+    const id = o.t === 'obj' && o.id != null ? String(o.id) : null;
+    const at = id && this.groups.has(id) ? this.lines.findIndex((l) => l.t === 'obj' && String(l.id) === id)
+      : o.t === 'env' || o.t === 'shot' ? this.lines.findIndex((l) => l.t === o.t) : -1;
+    if (id && this.groups.has(id)) this._remove([this.groups.get(id)]);
+    this.addLine(o, pop);
+    // Keep the line in its old place, so a later restyle still meets each obj before the many that repeats it.
+    if (at >= 0) { this.lines.pop(); this.lines[at] = o; }
+  }
+
   addLine(o, pop = true, delay = 0) {
     if (!o || typeof o !== 'object') return;
     this.lines.push(o);
@@ -119,9 +132,21 @@ export class Stage {
     } catch (e) { console.warn('bad scene line', o, e); }
   }
 
+  // Take an object, and every copy a many line made of it, off the stage.
+  drop(id) {
+    id = String(id);
+    this._remove([this.groups.get(id), ...(this.copies.get(id) || [])].filter(Boolean));
+    this.groups.delete(id); this.copies.delete(id); this.defs.delete(id);
+    this.lines = this.lines.filter((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id)));
+  }
+  _remove(groups) {
+    for (const g of groups) g.parent?.remove(g);
+    this.anims = this.anims.filter((a) => !groups.includes(a.g)); this.pops = this.pops.filter((p) => !groups.includes(p.g));
+  }
+
   // ---------- internals ----------
   _resetState() {
-    this.defs = new Map(); this.nodes = new Map(); this.pendingEdges = [];
+    this.defs = new Map(); this.groups = new Map(); this.copies = new Map(); this.nodes = new Map(); this.pendingEdges = [];
     this.anims = []; this.pops = []; this.pulses = []; this.disposables = []; this.count = 0;
     this.focusBox = new THREE.Box3(); this.focusN = 0; this.shotCam = null;
     this.diagramTarget = new THREE.Vector3();
@@ -271,6 +296,7 @@ export class Stage {
     const g = this._group(o.parts, Boolean(o.ghost));
     if (o.y) g.children.forEach((c) => { c.position.y += num(o.y); });
     this._place(g, at[0], at.length > 2 ? at[2] : at[1], o.ry, o.s, o.anim, pop, delay);
+    if (o.id != null) this.groups.set(String(o.id), g);
     this._focus(g);
   }
 
@@ -300,6 +326,8 @@ export class Stage {
       if (!Array.isArray(a)) return;
       const g = this._group(def.parts, Boolean(def.ghost));
       this._place(g, a[0], a[1], a[3] ?? (i * 73) % 360, num(def.s, 1) * num(a[2], 1), def.anim, pop, delay + i * 35);
+      const of = String(o.of); if (!this.copies.has(of)) this.copies.set(of, []);
+      this.copies.get(of).push(g);
     });
   }
 
