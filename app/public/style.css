@@ -117,10 +117,10 @@ main { height: calc(100% - 48px); display: grid; grid-template-columns: minmax(3
 
 /* ---------- coach ---------- */
 .coach { overflow-y: auto; padding: 16px 18px 40px; }
-.coach-head { display: flex; align-items: center; gap: 10px; }
-.coach-head h2 { flex: none; }
-.coach-status { flex: 1; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.verdict { margin-top: 14px; font-size: 14px; line-height: 1.45; }
+.coach-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0 10px; }
+.coach-head h2 { flex: 1; }
+.coach-status { order: 9; flex-basis: 100%; height: 16px; margin-top: 3px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.verdict { margin-top: 8px; font-size: 14px; line-height: 1.45; }
 .scores { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
 .score { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; }
 .score b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
