@@ -10,8 +10,10 @@ const flag = (k, d) => { const v = store.get(k); return v == null ? d : v === '1
 const S = {
   packs: [], pack: null, project: null, projects: [],
   strict: !flag('fill', true), restyle: flag('restyle', true), live: flag('live', true), improve: flag('improve', true), styleIdx: 0,
+  // What the AI may start on its own. Anything the writer asks for by hand always runs.
+  auto: { draw: flag('autoDraw', true), motion: flag('autoMotion', true), facts: flag('autoFacts', true), blanks: flag('autoBlanks', true) }, paused: false, spent: new Map(),
   scenes: new Map(), seq: 0, cur: 0, shown: null, paras: [],
-  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null, research: [], fills: { opts: new Map(), asked: new Set(), busy: null } },
+  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null, research: [], fills: { opts: new Map(), asked: new Set(), busy: null }, dismissed: new Set() },
 };
 const tipEls = new WeakMap();
 
@@ -55,6 +57,8 @@ async function boot() {
   if (q.get('style') || q.has('nocycle')) S.restyle = false;
   setStyle(Math.max(0, STYLE_ORDER.indexOf(q.get('style') || store.get('style'))));
   $('#restyleSw').checked = S.restyle; $('#improveSw').checked = S.improve; $('#fillSw').checked = !S.strict; $('#liveSw').checked = S.live;
+  for (const [id, k] of AUTOS) $('#' + id).checked = S.auto[k];
+  renderPause();
   buildMenus();
 
   const want = (location.hash.match(/p=([a-z0-9]+)/) || [])[1] || store.get('last');
@@ -100,9 +104,10 @@ function loadProject(p) {
   S.scenes.clear();
   for (const s of p.scenes || []) {
     const raw = (s.raw || []).filter((r) => parseLine(r)), lines = raw.map(parseLine); if (!lines.length) continue;
-    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', motionTried: Boolean(s.mo), status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
+    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', caption: s.cap || undefined, motionTried: Boolean(s.mo), status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
+  S.coach.dismissed = new Set(Array.isArray(p.dismissed) ? p.dismissed : []);
   applyPack(); restoreCoach(p.coach); restoreResearch(p.research); restoreFills(p.fills);
   onText(true, false);
 }
@@ -153,8 +158,9 @@ function snapshot(p) {
       for (const x of S.scenes.values()) if (x.pack === S.pack.id && x.idx === i && x.status === 'done' && x.raw.length && (!sc || x.seq > sc.seq)) sc = x;
     }
     const key = sc?.key.replace(/\|old$/, '');
-    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', mo: sc.motionTried ? 1 : 0 });
+    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', cap: sc.caption || '', mo: sc.motionTried ? 1 : 0 });
   });
+  p.dismissed = [...S.coach.dismissed].slice(-200);
   p.scenes = [...kept.values()];
 }
 // Saves are queued one after another, so a slow save can never overwrite a newer one.
@@ -267,6 +273,29 @@ $('#liveSw').onchange = (e) => {
   clearTimeout(coachTimer); if (S.live) runCoach(); renderCoach();
 };
 $('#improveSw').onchange = (e) => { S.improve = e.target.checked; store.set('improve', S.improve ? '1' : '0'); if (!S.improve) stopImproving(); };
+const AUTOS = [['autoDraw', 'draw'], ['autoMotion', 'motion'], ['autoFacts', 'facts'], ['autoBlanks', 'blanks']];
+for (const [id, k] of AUTOS) $('#' + id).onchange = (e) => {
+  S.auto[k] = e.target.checked; store.set(id, S.auto[k] ? '1' : '0');
+  if (k === 'draw' && S.auto.draw) schedule(); if (k === 'blanks') { renderBlanks(true); if (S.auto.blanks) runFills(); }
+};
+// Pause stops new automatic work from starting. Requests already sent keep going; Stop everything cancels those too.
+function renderPause() {
+  for (const id of ['pauseBtn', 'pauseBtn2']) $('#' + id).textContent = S.paused ? 'Resume' : id === 'pauseBtn' ? 'Pause' : 'Pause automatic work';
+}
+function setPaused(on) {
+  S.paused = on; renderPause(); renderBlanks(true);
+  if (on) stopImproving(); else { schedule(); if (S.live) runCoach(); runFills(); }
+  renderQueue();
+}
+$('#pauseBtn').onclick = $('#pauseBtn2').onclick = () => setPaused(!S.paused);
+$('#stopAllBtn').onclick = () => {
+  setPaused(true); const c = S.coach;
+  for (const sc of [...S.scenes.values()]) { if (flying(sc)) { sc.ctrl.abort(); S.scenes.delete(sc.key); } stopImproving(sc); }
+  c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear(); c.factBusy?.abort(); c.factBusy = null;
+  if (c.fills.busy) { c.fills.busy.abort(); c.fills.busy = null; }
+  c.research = c.research.filter((r) => { const busy = ['search', 'wait', 'gen'].includes(r.status); if (busy) r.ctrl.abort(); return !busy; });
+  renderResearch(); renderBlanks(true); renderPages(); showCurrent(); renderCoach(); renderQueue();
+};
 $('#reviewBtn').onclick = () => runCoach(true);
 $('#redrawBtn').onclick = () => redraw();
 $('#sampleBtn').onclick = () => { ta.value = S.pack.placeholder || ''; ta.focus(); ta.setSelectionRange(0, 0); onText(true); };
@@ -283,7 +312,7 @@ function onText(immediate = false, changed = true) {
   // a request for a half-typed sentence would be stale before it started, and its replacement queues again.
   clearTimeout(sceneTimer); sceneTimer = setTimeout(schedule, immediate ? 50 : SCENE_PAUSE);
   clearTimeout(coachTimer); if (S.live) coachTimer = setTimeout(runCoach, immediate ? 200 : COACH_PAUSE);
-  clearTimeout(fillTimer); if (S.live) fillTimer = setTimeout(runFills, immediate ? 400 : COACH_PAUSE);
+  clearTimeout(fillTimer); fillTimer = setTimeout(runFills, immediate ? 400 : COACH_PAUSE);
   renderBlanks(); renderCoach();
 }
 function moved(force = false) { if (syncCurrent() || force) { renderBackdrop(); renderPages(); showCurrent(); } }
@@ -376,7 +405,7 @@ function schedule() {
   }
   if (improving && !wanted.has(improving.key)) stopImproving();
   let live = [...S.scenes.values()].filter(flying).length;
-  for (const i of order) {
+  for (const i of S.paused || !S.auto.draw ? [] : order) {
     const p = S.paras[i]; if (!p || p.text.length < 12) continue;
     const key = keyOf(p.text); if (S.scenes.has(key) || busy.has(i)) continue;
     if (live >= 5) break;
@@ -437,12 +466,14 @@ function applyLine(sc, o) {
   if (shown) stage.upsert(o, true); else if (sceneFor(S.cur) === sc) showCurrent();
 }
 
-async function startScene(idx, text, key, { fresh = false, guide, from = null } = {}) {
+async function startScene(idx, text, key, { fresh = false, guide, from = null, caption } = {}) {
   const sc = { key, idx, pack: S.pack.id, seq: ++S.seq, text, lines: [], raw: [], status: 'wait', t0: performance.now(), waitMs: 0, genStart: 0, chars: 0, ctrl: new AbortController(), shot: null };
   // An edit keeps the drawing it had: the scene starts as a copy and Kimi sends only what changes.
   const base = from || (fresh ? null : earlierVersion(text, new Set(S.paras.map((p) => keyOf(p.text)))));
   // A direction from the writer stays with the paragraph through later edits.
   sc.guide = guide ?? base?.guide ?? ''; sc.updating = Boolean(base);
+  // So does the on-screen text the writer set by hand.
+  sc.caption = caption ?? base?.caption;
   if (base) {
     Object.assign(sc, { lines: base.lines.slice(), raw: base.raw.slice(), shot: base.shot, round: Math.min(base.round || 0, PLAN.length - 1), motionTried: base.motionTried });
     stopImproving(base);
@@ -454,7 +485,7 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null } 
     mode: S.pack.visual, style: STYLE_ORDER[S.styleIdx], strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'),
     cast: prev && !base ? prev.raw.filter((r) => r.includes('"t":"obj"') && !r.includes('"ghost":true')).slice(0, 5).join('\n') : '',
-    paragraph: text, fresh, guide: sc.guide,
+    paragraph: text, fresh, guide: sc.guide, caption: sc.caption || '',
     ...(base ? { update: true, before: base.text, scene: base.raw.join('\n') } : {}),
   };
   try {
@@ -488,13 +519,13 @@ function redraw() {
   if (old?.status === 'cancelled' && !old.lines.length) old = null;
   stopImproving(old);
   if (old) { S.scenes.delete(key); if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); } }
-  startScene(S.cur, p.text, key, { fresh: true, guide: old?.guide }); renderPages();
+  startScene(S.cur, p.text, key, { fresh: true, guide: old?.guide, caption: old?.caption }); renderPages();
 }
 
 // ---------- guide ----------
 // The writer tells the illustrator what to change. A request still in the queue for this paragraph is
 // replaced, because the direction changes what it should draw; a finished drawing is updated in place.
-function guideScene(idx, guide) {
+function guideScene(idx, guide, caption) {
   const p = S.paras[idx]; if (!p || p.text.length < 12) return;
   const key = keyOf(p.text), wanted = new Set(S.paras.map((x) => keyOf(x.text)));
   for (const sc of [...S.scenes.values()]) if (flying(sc) && (sc.key === key || (sc.idx === idx && !wanted.has(sc.key)))) { sc.ctrl.abort(); S.scenes.delete(sc.key); }
@@ -503,28 +534,76 @@ function guideScene(idx, guide) {
     stopImproving(old); S.scenes.delete(key);
     if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); from = old; }
   }
-  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from }); renderPages();
+  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from, caption: caption ?? old?.caption }); renderPages();
 }
-let guideIdx = 0;
-function openGuide(idx) {
-  guideIdx = idx; const sc = activeFor(idx) || sceneFor(idx);
-  $('#guideTitle').textContent = S.paras.length > 1 ? `Guide scene ${idx + 1}` : 'Guide this drawing';
-  $('#guideText').value = sc?.guide || ''; $('#guideDlg').showModal(); $('#guideText').focus();
+
+// ---------- scene inspector ----------
+// The strip under the stage holds everything about how the current scene looks: the words on screen, the
+// direction given to the illustrator, and the motion. None of it is part of the script.
+const sceneNow = () => activeFor(S.cur) || sceneFor(S.cur);
+function setCaption(idx, text) {
+  const sc = activeFor(idx) || sceneFor(idx); if (!sc) return;
+  sc.caption = text.trim().slice(0, 60) || undefined;
+  if (S.shown === sc) showShot(sc.shot);
+  markDirty(`Scene ${idx + 1} on-screen text`); inspSig = ''; renderInspector();
 }
-$('#guideBtn').onclick = () => openGuide(S.cur);
-$('#guideText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#guideForm').requestSubmit(); } });
-$('#guideForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(guideIdx, $('#guideText').value); $('#guideDlg').close(); });
+const who = (ref) => (Array.isArray(ref) ? 'a point' : String(ref ?? '').replace(/^(subject|setting|background|polish|motion)_/, '').replace(/_/g, ' '));
+function motionWords(o) {
+  if (o.t === 'count') return `counts ${o.from ?? 0} to ${Number(o.to).toLocaleString()}${o.text ? ' ' + String(o.text).replace('{n}', '').trim() : ''}`;
+  if (o.t === 'obj') return `${who(o.id)} ${o.in === 'drop' ? 'drops in' : o.in === 'grow' ? 'grows up' : o.in === 'left' || o.in === 'right' ? 'slides in' : 'appears'}`;
+  const id = who(o.id);
+  return { move: `${id} goes to ${who(o.to)}`, flow: `${o.of ? who(o.of) + 's' : 'dots'} flow from ${who(o.from)} to ${who(o.to)}`, grow: `${id} ${Number(o.k) < 1 ? 'shrinks' : 'grows'}`,
+    rise: `${id} rises`, shake: `${id} shakes`, vanish: `${id} vanishes`, spin: `${id} spins`, flash: `${id} is highlighted`, look: `camera on ${id}` }[o.do] || o.do;
+}
+let inspSig = '';
+function renderInspector() {
+  const sc = sceneNow(), mode = S.pack?.visual, drawable = (S.paras[S.cur]?.text.length || 0) >= 12;
+  $('#capRow').hidden = mode !== 'storyboard'; $('#motionRow').hidden = mode === 'diagram';
+  const cap = $('#capInput'), dir = $('#dirInput');
+  cap.disabled = !sc; dir.disabled = !drawable; $('#dirBtn').disabled = !drawable;
+  $('#animateBtn').disabled = !sc || sc.status !== 'done' || Boolean(sc.wantMotion) || Boolean(sc.imps);
+  const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || (l.t === 'obj' && l.step)) : [];
+  const sig = [S.cur, sc?.key, sc?.caption, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
+  if (sig === inspSig) return; inspSig = sig;
+  if (document.activeElement !== cap) { cap.value = sc?.caption ?? sc?.shot?.text ?? ''; cap.placeholder = sc?.shot?.text || 'Words shown on screen during this scene'; }
+  if (document.activeElement !== dir) dir.value = sc?.guide || '';
+  const busy = sc?.wantMotion || sc?.imps?.some((i) => i.focus === 'motion');
+  $('#motion').innerHTML = moves.sort((a, b) => (a.step || 0) - (b.step || 0)).map((l) => `<span class="chip"><b>${Number(l.step) || 1}</b>${esc(motionWords(l))}`
+    + (l.t === 'obj' ? '' : `<button data-key="${esc(actKey(l))}" title="Remove this motion">×</button>`) + '</span>').join('')
+    || `<span class="none">${busy ? 'Motion is on its way.' : sc ? 'Nothing moves yet.' : ''}</span>`;
+}
+$('#capInput').addEventListener('change', () => setCaption(S.cur, $('#capInput').value));
+$('#capInput').addEventListener('input', () => { const sc = sceneNow(); if (sc && S.shown === sc) $('#caption').textContent = $('#capInput').value; });
+$('#capInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+$('#dirForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(S.cur, $('#dirInput').value); $('#dirInput').blur(); });
+$('#motion').addEventListener('click', (e) => {
+  const key = e.target.closest('button')?.dataset.key, sc = sceneNow(); if (!key || !sc) return;
+  const keep = sc.lines.map((l) => !((l.t === 'act' || l.t === 'count') && actKey(l) === key));
+  sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
+  if (S.shown === sc) stage.dropAct(key);
+  markDirty(`Scene ${S.cur + 1} motion removed`); renderInspector();
+});
+// Re-animate throws the scene's motion away and asks for it again. It jumps the line of automatic work.
+$('#animateBtn').onclick = () => {
+  const sc = sceneNow(); if (!sc || sc.status !== 'done') return;
+  const keep = sc.lines.map((l) => l.t !== 'act' && l.t !== 'count');
+  sc.lines.forEach((l, i) => { if (!keep[i] && S.shown === sc) stage.dropAct(actKey(l)); });
+  sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
+  sc.wantMotion = true; sc.impError = false; if (improving && improving !== sc) stopImproving();
+  renderInspector();
+};
 
 // ---------- queue ----------
 // Everything that is waiting for the model, with the prompt that was sent, and a way to cancel it,
 // resend it with the current text, or resend a drawing with a direction.
 let qSeq = 0, queueSig = ''; const qIds = new WeakMap();
 const qId = (o) => { if (!qIds.has(o)) qIds.set(o, ++qSeq); return qIds.get(o); };
+const mins = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`);
 function queueItems() {
   const c = S.coach, items = [], wanted = new Set(S.paras.map((p) => keyOf(p.text)));
   for (const sc of S.scenes.values()) {
     if (flying(sc)) { const stale = !wanted.has(sc.key); items.push({ o: sc, kind: 'scene', title: `Scene ${sc.idx + 1}`, sub: [sc.updating ? 'update' : 'new drawing', stale ? 'older wording' : '', sc.guide ? 'guided' : ''].filter(Boolean).join(' · '), text: sc.text, stale }); }
-    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: `improving ${imp.focus}`, text: sc.text });
+    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: imp.focus === 'motion' ? 'adding motion' : `improving ${imp.focus}`, text: sc.text });
   }
   for (const r of c.runs.values()) { const stale = r.text !== ta.value; items.push({ o: r, kind: 'coach', title: 'Review', sub: stale ? 'older draft' : '', text: r.text, stale }); }
   if (c.factBusy) items.push({ o: c.factBusy, kind: 'facts', title: 'Fact check', sub: '', text: c.factBusy.quotes.join(' · ') });
@@ -534,8 +613,13 @@ function queueItems() {
 }
 function renderQueue() {
   const items = queueItems(), box = $('#queue');
-  $('#queueBtn').innerHTML = items.length ? `Queue<i>${items.length}</i>` : 'Queue';
+  // The header always says what is being worked on right now, and for how long.
+  const top = items.find((it) => it.o.status === 'gen') || items.slice().sort((a, b) => (a.o.t0 || 0) - (b.o.t0 || 0))[0];
+  const pill = $('#queueBtn'); pill.className = 'activity ' + (S.paused && !top ? 'paused' : top ? (top.o.status === 'gen' ? 'gen' : 'wait') : '');
+  const words = top ? `${top.title}${top.sub ? ' · ' + top.sub : ''} · ${top.o.status === 'gen' ? 'answering' : top.o.status === 'search' ? 'searching' : Math.round((performance.now() - top.o.t0) / 1000) + 's in queue'}` : S.paused ? 'Paused' : 'Nothing running';
+  pill.innerHTML = `<b class="lamp"></b><span>${esc(words)}</span>${items.length > 1 ? `<i>+${items.length - 1}</i>` : ''}`;
   if (!$('#queueDlg').open) { queueSig = ''; return; }
+  $('#spent').innerHTML = [...S.spent].map(([kind, v]) => `<div><b>${esc(kind)}</b><span>${v.n} request${v.n === 1 ? '' : 's'}</span><span>${mins(v.wait)} in queue</span><span>${mins(v.gen)} answering</span>${v.stopped ? `<span>${v.stopped} stopped</span>` : ''}</div>`).join('') || 'No requests yet.';
   $('#queueEmpty').hidden = items.length > 0;
   const sig = items.map((it) => `${qId(it.o)}${it.o.status === 'gen' ? 'g' : 'w'}${it.stale ? 's' : ''}${it.o.prompt ? 'p' : ''}`).join(',');
   if (sig !== queueSig) {
@@ -591,26 +675,30 @@ $('#queue').addEventListener('submit', (e) => { e.preventDefault(); const q = e.
 const PLAN = [['subject', 'setting', 'background'], ['polish'], ['polish'], ['polish']];
 // Once the first round has filled the scene in, one pass choreographs it: what moves, in what order, to tell the paragraph.
 // A scene that was drawn with motion already has it; this is for scenes that came out still.
-const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines.some((l) => l.t === 'act' || l.step);
+const needsMotion = (sc) => ((sc.round || 0) >= 1 || !S.improve) && !sc.motionTried && !sc.lines.some((l) => l.t === 'act' || l.step);
 let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
-  if (!S.improve || improving || !S.pack || S.pack.visual === 'diagram' || document.hidden) return null;
+  if (improving || !S.pack || S.pack.visual === 'diagram') return null;
+  // Motion the writer asked for goes first, whatever the switches say.
+  const asap = [...S.scenes.values()].find((sc) => sc.wantMotion && sc.status === 'done' && sc.lines.length);
+  if (asap) return asap;
+  if (S.paused || (!S.improve && !S.auto.motion) || document.hidden) return null;
   // Improvement passes share the queue with everything else, so they wait until nothing the writer asked for is in it.
   const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
   if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
-  for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && ((sc.round || 0) < PLAN.length || needsMotion(sc)) && !sc.impError) return sc; }
+  for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && ((S.improve && (sc.round || 0) < PLAN.length) || (S.auto.motion && needsMotion(sc))) && !sc.impError) return sc; }
   return null;
 }
 async function improveRound(sc) {
   improving = sc; sc.imps = [];
-  const round = sc.round || 0, motion = needsMotion(sc);
+  const round = sc.round || 0, motion = sc.wantMotion || (S.auto.motion && needsMotion(sc)); sc.wantMotion = false;
   const results = await Promise.all((motion ? ['motion'] : PLAN[round]).map((focus) => improveOnce(sc, focus)));
   sc.imps = null; improving = null;
   if (results.includes('aborted')) return;
   if (results.every((r) => r === 'error')) sc.impError = true;
-  else if (motion) { sc.motionTried = true; markDirty(results[0] > 0 ? `Scene ${sc.idx + 1} animated` : 'Edited'); }
+  else if (motion) { sc.motionTried = true; inspSig = ''; markDirty(results[0] > 0 ? `Scene ${sc.idx + 1} animated` : 'Edited'); }
   // A round that changed nothing means Kimi has nothing left to add.
   else { const added = results.some((r) => r > 0); sc.round = added ? round + 1 : PLAN.length; markDirty(added ? `Scene ${sc.idx + 1} improved (${PLAN[round].join(', ')})` : 'Edited'); }
   renderPages();
@@ -661,7 +749,7 @@ function showCurrent() {
 function showShot(o) {
   const on = Boolean(o) && S.pack?.visual === 'storyboard';
   $('#phone').hidden = !on; if (!on) return;
-  $('#beat').textContent = o.beat || ''; $('#sec').textContent = o.sec ? `${o.sec}s` : ''; $('#caption').textContent = o.text || '';
+  $('#beat').textContent = o.beat || ''; $('#sec').textContent = o.sec ? `${o.sec}s` : ''; $('#caption').textContent = S.shown?.caption ?? o.text ?? '';
 }
 
 function renderPages() {
@@ -672,6 +760,7 @@ function renderPages() {
     return `<button data-i="${i}" class="${i === S.cur ? 'on' : ''} ${sc?.lines.length ? 'ready' : ''} ${act && (flying(act) || act.imps) ? 'busy' : ''}">${label}</button>`;
   }).join('') + (total ? `<span class="total">${total}s</span>` : '');
   $('#pages').innerHTML = S.paras.length > 1 || total ? html : '';
+  renderInspector();
 }
 $('#pages').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return; const p = S.paras[Number(b.dataset.i)]; if (!p) return;
@@ -709,8 +798,8 @@ function tick() {
   $('#reviewBtn').disabled = runs.length > 0 || ta.value.trim().length < 3;
   researchStatus(); blanksStatus();
   const drawable = (S.paras[S.cur]?.text.length || 0) >= 12;
-  $('#redrawBtn').disabled = !drawable || Boolean(act && flying(act)); $('#guideBtn').disabled = !drawable;
-  renderQueue();
+  $('#redrawBtn').disabled = !drawable || Boolean(act && flying(act));
+  renderInspector(); renderQueue();
 }
 
 // ---------- coach ----------
@@ -739,22 +828,24 @@ function renderCoach() {
   $('#tipsCount').textContent = tips + blanks || ''; $('#ideasCount').textContent = ideas || '';
   $('#researchCount').textContent = c.research.reduce((n, r) => n + r.lines.filter((o) => o.k === 'finding').length, 0) || '';
   $('#stagesCount').textContent = stages.length && c.shownSeq ? `${done}/${stages.length}` : '';
-  $('#reviewBtn').hidden = S.live;
+  $('#reviewBtn').hidden = S.live && !S.paused;
   $('#detailsWrap').hidden = !$('#details').children.length;
+  const unsure = $('#unsure').children.length; $('#unsureWrap').hidden = !unsure; $('#unsureWrap summary').textContent = `${unsure} claim${unsure === 1 ? '' : 's'} could not be checked`;
   $('#goodWrap').hidden = !$('#good').children.length; $('#asksWrap').hidden = !$('#asks').children.length; $('#nextWrap').hidden = !$('#next').children.length;
   $('#ideasEmpty').hidden = ideas > 0;
   const empty = $('#tipsEmpty'); empty.hidden = tips > 0 || blanks > 0 || $('#good').children.length > 0;
   empty.textContent = c.runs.size ? 'Reading your draft…'
     : c.shownSeq ? 'No tips left. Keep writing.'
     : ta.value.trim().length < 3 ? 'Write a few lines and the coach will read them.'
-    : S.live ? 'The coach reads your draft each time you pause.' : 'Auto review is off. Press Review when you want notes.';
+    : S.paused ? 'Automatic work is paused. Press Review when you want notes.'
+    : S.live ? 'The coach reads your draft each time you pause.' : 'Automatic review is off. Press Review when you want notes.';
 }
 
 function resetCoach() {
   const c = S.coach; c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear(); c.factBusy?.abort(); c.factBusy = null; c.factRuns = [];
   Object.assign(c, { tips: [], good: [], hot: null, shownSeq: 0, states: {}, saved: null, allTips: false });
-  for (const id of ['scores', 'verdict', 'tips', 'good', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
-  $('#scores').hidden = true; $('#verdict').hidden = true; layoutTips();
+  for (const id of ['tips', 'good', 'unsure', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
+  layoutTips();
   $('#structureName').textContent = S.pack?.structure?.name || 'Structure';
   renderStages(); setTab('tips'); renderCoach();
 }
@@ -782,8 +873,9 @@ $('#rulesBtn').onclick = () => $('#rulesDlg').showModal();
 // force = the writer pressed Review. Without it, a draft that was already reviewed is left alone.
 async function runCoach(force = false) {
   const c = S.coach; const text = ta.value; if (!S.pack || text.trim().length < 3) return;
-  const reviewed = c.saved && c.saved.text === text && c.saved.pack === S.pack.id;
-  if (reviewed && !force) return;
+  // Notes written under the coach's earlier instructions (v missing) are refreshed once.
+  const reviewed = c.saved && c.saved.v === 2 && c.saved.text === text && c.saved.pack === S.pack.id;
+  if ((reviewed || S.paused) && force !== true) return;
   if ([...c.runs.values()].some((r) => r.text === text && r.pack === S.pack.id)) return;
   const waiting = [...c.runs.values()].filter((r) => r.status === 'wait').sort((a, b) => a.seq - b.seq);
   waiting.slice(1).forEach((r) => { r.ctrl.abort(); c.runs.delete(r.seq); });
@@ -800,7 +892,7 @@ async function runCoach(force = false) {
   } catch { /* aborted or failed */ }
   c.runs.delete(run.seq);
   if (run.status === 'done' && run.seq >= c.shownSeq && run.project === S.project?.id && run.pack === S.pack.id) {
-    c.saved = { text: run.text, pack: run.pack, lines: run.lines }; markDirty('Coach notes');
+    c.saved = { v: 2, text: run.text, pack: run.pack, lines: run.lines }; markDirty('Coach notes');
     checkFacts(run);
   }
   renderCoach();
@@ -812,7 +904,7 @@ async function checkFacts(run) {
   for (const fr of c.factRuns) { const alive = fr.quotes.some(has); for (const o of fr.lines) if (o.k === 'fact' ? has(o.quote) : alive) show(o); }
   const known = new Set(c.factRuns.flatMap((fr) => fr.quotes.map((q) => q.toLowerCase())));
   const fresh = run.checks.filter((x) => x.quote && x.query && has(x.quote) && !known.has(String(x.quote).toLowerCase())).slice(0, 3);
-  if (!fresh.length || c.factBusy) return;
+  if (!fresh.length || c.factBusy || S.paused || !S.auto.facts) return;
   const ctrl = new AbortController(); Object.assign(ctrl, { t0: performance.now(), status: 'wait', quotes: fresh.map((x) => x.quote) }); c.factBusy = ctrl; const fr = { quotes: fresh.map((x) => x.quote), lines: [] }; let ok = false;
   try {
     await sse('/api/facts', { pack: run.pack, text: run.text, checks: fresh }, ctrl.signal, (ev) => {
@@ -831,29 +923,43 @@ function coachLine(run, o) {
   const c = S.coach; if (run.pack !== S.pack.id || run.seq < c.shownSeq) return;
   if (run.seq > c.shownSeq) {
     c.shownSeq = run.seq; c.tips = []; c.good = []; c.hot = null; c.allTips = false;
-    for (const id of ['tips', 'good', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
+    for (const id of ['tips', 'good', 'unsure', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
   }
+  if (c.dismissed.has(dismissKey(o))) return;
   const rule = S.pack.rules.find((r) => r.id === o.rule); const src = rule && S.pack.sources.find((s) => s.id === rule.source);
   const link = (url, text, title = '') => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${esc(text)}</a>` : `<span title="${esc(title)}">${esc(text)}</span>`);
   const wiki = o.url ? link(o.url, hostOf(o.url), o.title || '') : '';
   const hover = (el) => { el.onmouseenter = () => { c.hot = o; renderBackdrop(); }; el.onmouseleave = () => { c.hot = null; renderBackdrop(); }; };
   // One card shape for coach tips and failed fact checks: what to do, the rewrite, where it comes from.
-  const card = (text, from, cls = '') => {
+  const card = (text, from, cls = '', extra = {}) => {
     c.tips.push(o);
-    const el = document.createElement('div'); el.className = `card ${cls}` + (findQuote(ta.value, o.quote) < 0 ? ' stale' : '');
-    const canFix = Boolean(o.fix && o.quote);
-    el.innerHTML = `<div class="tip">${esc(text)}</div>${canFix ? `<div class="fix">${esc(o.fix)}</div>` : ''}<div class="foot"><span class="rule">${from}</span>${canFix ? '<button>Apply</button>' : ''}</div>`;
+    const el = document.createElement('div'); el.className = `card ${cls}` + (o.quote && findQuote(ta.value, o.quote) < 0 ? ' stale' : '');
+    const canFix = Boolean(extra.use) || (typeof o.fix === 'string' && Boolean(o.quote) && (o.fix || o.k === 'tip'));
+    const fix = extra.fix ?? (o.fix || '');
+    el.innerHTML = `<button class="gone" title="Dismiss">×</button><div class="tip">${esc(text)}</div>${fix ? `<div class="fix">${esc(fix)}</div>` : ''}<div class="foot"><span class="rule">${from}</span>${canFix ? `<button class="go">${extra.label || (o.fix ? 'Apply' : 'Cut')}</button>` : ''}</div>`;
     hover(el); tipEls.set(o, el);
-    el.addEventListener('click', (e) => { if (!e.target.closest('a, button')) selectQuote(o.quote); });
-    el.querySelector('.foot button')?.addEventListener('click', () => { el.remove(); layoutTips(); applyFix(o); });
-    if (cls) $('#tips').prepend(el); else $('#tips').appendChild(el);
+    const gone = () => { el.remove(); c.tips = c.tips.filter((t) => t !== o); c.hot = null; layoutTips(); renderBackdrop(); renderCoach(); };
+    el.addEventListener('click', (e) => { if (!e.target.closest('a, button') && o.quote) selectQuote(o.quote); });
+    el.querySelector('.go')?.addEventListener('click', () => { gone(); (extra.use || applyFix)(o); });
+    // A dismissed note stays away: the same note about the same words is not shown again in this project.
+    el.querySelector('.gone').addEventListener('click', () => {
+      c.dismissed.add(dismissKey(o)); if (c.saved) c.saved.lines = c.saved.lines.filter((l) => l !== o);
+      gone(); markDirty('Coach notes');
+    });
+    if (cls === 'fact') $('#tips').prepend(el); else $('#tips').appendChild(el);
     layoutTips(); renderBackdrop();
   };
   const goodLine = (html) => { c.good.push(o); const el = document.createElement('div'); el.className = 'goodline'; el.innerHTML = html; hover(el); $('#good').appendChild(el); };
   if (o.k === 'tip' && o.tip) card(o.tip, rule ? `<b>${link(src?.url, rule.name, src?.title)}</b>` : '');
   else if (o.k === 'good' && o.note) goodLine(esc(o.note));
   else if (o.k === 'fact' && o.note && o.verdict === 'true') goodLine(`Checks out: ${esc(o.note)} ${wiki}`);
-  else if (o.k === 'fact' && o.note) card(o.note, `<b>${o.verdict === 'false' ? 'Fact check' : 'Could not confirm'}</b>${wiki ? ' · ' + wiki : ''}`, 'fact');
+  else if (o.k === 'fact' && o.note && o.verdict === 'false') card(o.note, `<b>Fact check</b>${wiki ? ' · ' + wiki : ''}`, 'fact');
+  // A claim the sources neither confirm nor contradict is not a problem with the draft, so it stays out of the tips.
+  else if (o.k === 'fact' && o.note) { const el = document.createElement('div'); el.className = 'u'; el.innerHTML = `<q>${esc(o.quote)}</q> ${esc(o.note)} ${wiki}`; $('#unsure').appendChild(el); }
+  else if (o.k === 'shot' && (o.show || o.text)) {
+    card(o.show ? `Show: ${o.show}` : 'Put this on screen', `<b>${o.inscript ? 'Stage direction in the script' : 'Visual idea'}</b>`, 'shot',
+      { fix: o.text ? `On screen: ${o.text}` : '', label: o.inscript ? 'Move to the scene' : 'Use for the scene', use: useShot });
+  }
   else if (o.k === 'detail' && o.text) {
     const el = document.createElement('div'); el.className = 'detail';
     el.innerHTML = `<button class="line">${esc(o.text)}</button>${wiki ? `<span class="src">${wiki}</span>` : ''}`;
@@ -865,18 +971,36 @@ function coachLine(run, o) {
     const el = document.createElement('button'); el.className = 'line'; el.textContent = o.text;
     el.onclick = () => { addLine(o.text, 'Added a suggested line'); el.remove(); renderCoach(); };
     $('#next').appendChild(el);
-  } else if (o.k === 'score') {
-    const cell = (n, l) => { const v = Math.max(0, Math.min(100, Math.round(Number(n) || 0))); return `<div class="score">${l}<b>${v}</b><div class="bar"><i style="width:${v}%"></i></div></div>`; };
-    $('#scores').innerHTML = cell(o.specific, 'Specific') + cell(o.clear, 'Clear') + cell(o.structure, 'Structure'); $('#scores').hidden = false;
-    $('#verdict').textContent = o.line || ''; $('#verdict').hidden = !o.line;
   }
   renderCoach();
 }
+const dismissKey = (o) => `${o.k}|${o.rule || ''}|${String(o.quote || o.show || o.text || '').toLowerCase()}`;
+// A visual idea goes to the scene, never into the script: what to show becomes the scene's direction and the
+// words become its on-screen text. If the idea was written into the script, it is taken out of it first.
+function useShot(o) {
+  let idx = S.cur; const i = o.quote ? findQuote(ta.value, o.quote) : -1;
+  if (i >= 0) {
+    if (o.inscript) {
+      const a = ta.value.slice(0, i).replace(/[ \t]+$/, ''), b = ta.value.slice(i + o.quote.length).replace(/^[ \t]+/, '');
+      ta.value = (a + (a && b && !a.endsWith('\n') && !b.startsWith('\n') ? ' ' : '') + b).replace(/\n{3,}/g, '\n\n');
+      S.paras = paragraphs(ta.value);
+    }
+    const pos = Math.min(i, ta.value.length); idx = S.paras.findIndex((p) => pos <= p.end); if (idx < 0) idx = S.paras.length - 1;
+  }
+  if (o.inscript && i >= 0) { const p = S.paras[idx]; if (p) ta.setSelectionRange(p.start, p.start); onText(true); markDirty('Moved a stage direction out of the script'); }
+  if (!S.paras[idx]) return;
+  if (o.show) guideScene(idx, o.show, o.text || undefined); else if (o.text) setCaption(idx, o.text);
+  moved(true);
+}
+
 // ---------- blanks ----------
 // A blank is a slot in square brackets the writer still has to fill, like [specific cooling step].
 // The coach suggests what could go in each one; a click puts the suggestion into the draft.
 const BLANK = /\[(?=[^\]]*[A-Za-z])[^\[\]\n]{2,60}\](?!\()/g;
 const blanksIn = (text) => [...new Set([...text.matchAll(BLANK)].map((m) => m[0]))];
+// [Cut to ...] and [Text: ...] are stage directions, not blanks: they belong to the scene, not the script.
+const STAGE_DIR = /^\[\s*(cut to|text\s*:|on[- ]?screen|b-?roll|show|visual|shot|sfx|caption\s*:)/i;
+const directionOf = (slot) => { const inner = slot.slice(1, -1).trim(), m = /^(text|caption|on[- ]?screen(?: text)?)\s*:\s*/i.exec(inner); return m ? { quote: slot, inscript: true, text: inner.slice(m[0].length) } : { quote: slot, inscript: true, show: inner }; };
 const sameSlot = (a, b) => String(a).replace(/[\[\]]/g, '').trim().toLowerCase() === String(b).replace(/[\[\]]/g, '').trim().toLowerCase();
 function restoreFills(saved) {
   const f = S.coach.fills; f.busy?.abort(); f.busy = null; f.opts = new Map(); f.asked = new Set();
@@ -886,18 +1010,20 @@ function restoreFills(saved) {
 let blanksSig = '';
 function renderBlanks(force = false) {
   const f = S.coach.fills, slots = blanksIn(ta.value);
-  const sig = slots.map((s) => `${s}|${(f.opts.get(s) || []).length}|${f.asked.has(s) ? 1 : 0}|${f.busy?.slots.includes(s) ? 1 : 0}`).join('\n') + S.live;
+  const auto = S.auto.blanks && !S.paused;
+  const sig = slots.map((s) => `${s}|${(f.opts.get(s) || []).length}|${f.asked.has(s) ? 1 : 0}|${f.busy?.slots.includes(s) ? 1 : 0}`).join('\n') + auto;
   if (!force && sig === blanksSig) return;
   blanksSig = sig; $('#blanksWrap').hidden = !slots.length;
-  $('#fillAllBtn').hidden = slots.length < 2;
+  $('#fillAllBtn').hidden = slots.filter((x) => !STAGE_DIR.test(x)).length < 2;
   $('#blanks').innerHTML = slots.map((slot) => {
+    if (STAGE_DIR.test(slot)) return `<div class="blank" data-slot="${esc(slot)}"><button class="slot" data-act="select" title="Show it in the draft">${esc(slot)}</button><p class="empty">This is a stage direction, not something you say. <button class="link" data-act="move">Move it to the scene</button></p></div>`;
     const opts = f.opts.get(slot) || [], picks = opts.filter((o) => o.text), search = opts.find((o) => o.search)?.search;
     const rows = picks.map((o) => `<div class="detail"><button class="line" data-j="${opts.indexOf(o)}" title="Put this in the blank">${esc(o.text)}</button>`
       + (o.url || o.who ? `<span class="src">${esc(o.who || '')}${o.who && o.url ? ' · ' : ''}${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title || '')}">${esc(hostOf(o.url))}</a>` : ''}</span>` : '') + '</div>').join('');
     const hint = f.busy?.slots.includes(slot) ? '<p class="empty" data-wait></p>'
       : picks.length ? ''
       : f.asked.has(slot) ? `<p class="empty">No source covers this yet. <button class="link" data-act="agent" data-search="${esc(search || '')}">Send the agent to find it</button></p>`
-      : S.live ? '<p class="empty">Suggestions come when you pause.</p>' : '<p class="empty"><button class="link" data-act="suggest">Suggest what goes here</button></p>';
+      : auto ? '<p class="empty">Suggestions come when you pause.</p>' : '<p class="empty"><button class="link" data-act="suggest">Suggest what goes here</button></p>';
     return `<div class="blank" data-slot="${esc(slot)}"><button class="slot" data-act="select" title="Show it in the draft">${esc(slot)}</button>${rows}${hint}</div>`;
   }).join('');
   blanksStatus();
@@ -910,7 +1036,8 @@ function blanksStatus() {
 // Runs by itself when the writer pauses: one request covers every blank that has no suggestions yet.
 async function runFills(force = false) {
   const f = S.coach.fills; if (!S.pack || f.busy) return;
-  const slots = blanksIn(ta.value).filter((s) => !f.asked.has(s) || (force === true && !(f.opts.get(s) || []).some((o) => o.text))).slice(0, 6);
+  if (force !== true && (S.paused || !S.auto.blanks)) return;
+  const slots = blanksIn(ta.value).filter((s) => !STAGE_DIR.test(s)).filter((s) => !f.asked.has(s) || (force === true && !(f.opts.get(s) || []).some((o) => o.text))).slice(0, 6);
   if (!slots.length) return;
   const run = Object.assign(new AbortController(), { slots, t0: performance.now(), status: 'wait' }); f.busy = run; renderBlanks(true);
   const fresh = new Set();
@@ -930,7 +1057,7 @@ async function runFills(force = false) {
   f.busy = null; slots.forEach((s) => f.asked.add(s));
   if (fresh.size) markDirty('Coach notes');
   renderBlanks(true); renderCoach();
-  if (S.live) runFills();
+  runFills();
 }
 function pickFill(slot, o) {
   const i = ta.value.indexOf(slot); if (i < 0) return;
@@ -943,11 +1070,12 @@ $('#blanks').addEventListener('click', (e) => {
   if (b.dataset.j) pickFill(slot, f.opts.get(slot)[Number(b.dataset.j)]);
   else if (b.dataset.act === 'select') selectQuote(slot);
   else if (b.dataset.act === 'suggest') runFills(true);
+  else if (b.dataset.act === 'move') useShot(directionOf(slot));
   else if (b.dataset.act === 'agent') { setTab('research'); ask(`Find ${b.dataset.search || 'what goes in ' + slot} and fill in the blank ${slot}`); }
 });
 $('#blanks').addEventListener('mouseover', (e) => { const slot = e.target.closest('.blank')?.dataset.slot; if (slot !== S.coach.hotSlot) { S.coach.hotSlot = slot; renderBackdrop(); } });
 $('#blanks').addEventListener('mouseleave', () => { S.coach.hotSlot = null; renderBackdrop(); });
-$('#fillAllBtn').onclick = () => { setTab('research'); ask('Fill in every blank in square brackets'); };
+$('#fillAllBtn').onclick = () => { setTab('research'); ask('Fill in every blank in square brackets with spoken words. Leave stage directions like [Cut to ...] and [Text: ...] alone.'); };
 
 // ---------- agent ----------
 // The writer sends the agent to do a job: look something up, fill the blanks, rewrite the draft, or all of it.
@@ -1095,18 +1223,29 @@ function autotype(text, cps) {
 }
 
 // ---------- transport ----------
+// Every request is timed, so Activity can show where the minutes went.
+const kindOf = (url, body) => (url === '/api/scene' ? (body.improve ? (body.focus === 'motion' ? 'Motion' : 'Improving looks') : 'Drawing scenes')
+  : { '/api/coach': 'Reviewing the draft', '/api/facts': 'Checking facts', '/api/fill': 'Suggesting blanks', '/api/ask': 'Agent' }[url] || url);
 async function sse(url, body, signal, onEvent) {
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
-  for (;;) {
-    const { value, done } = await reader.read(); if (done) break;
-    buf += dec.decode(value, { stream: true }); let i;
-    while ((i = buf.indexOf('\n\n')) >= 0) {
-      const row = buf.slice(0, i); buf = buf.slice(i + 2);
-      if (row.startsWith('data:')) { try { onEvent(JSON.parse(row.slice(5))); } catch (e) { console.warn(e); } }
+  const kind = kindOf(url, body), t0 = performance.now(); let first = 0;
+  const tally = () => {
+    const v = S.spent.get(kind) || { n: 0, wait: 0, gen: 0, stopped: 0 }, now = performance.now();
+    v.n++; v.wait += (first || now) - t0; v.gen += first ? now - first : 0; if (signal?.aborted) v.stopped++;
+    S.spent.set(kind, v);
+  };
+  try {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const row = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (row.startsWith('data:')) { try { const ev = JSON.parse(row.slice(5)); if (ev.type === 'first' && !first) first = performance.now(); onEvent(ev); } catch (e) { console.warn(e); } }
+      }
     }
-  }
+  } finally { tally(); }
 }
 
 boot();

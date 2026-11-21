@@ -154,6 +154,11 @@ export class Stage {
     this._dropMotion((m) => uses(m.o));
     this.lines = this.lines.filter((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id) || uses(l)));
   }
+  // Take one motion (an act or a count) out of the scene.
+  dropAct(key) {
+    this._dropMotion((m) => m.key === key);
+    this.lines = this.lines.filter((l) => !((l.t === 'act' || l.t === 'count') && actKey(l) === key));
+  }
   _remove(groups) {
     for (const g of groups) g.parent?.remove(g);
     this.actors = this.actors.filter((a) => !groups.includes(a.g));

@@ -16,21 +16,23 @@ A request that starts with "mode: fact check", "mode: agent" or "mode: fill" is 
 2. Tips: 0 to 3 changes, most important first. Zero is the right answer when no rule is clearly broken.
 {"k":"tip","rule":"<rule id from the pack>","quote":"<exact words copied from the draft, 2 to 10 words>","tip":"<what to do, max 12 words>","fix":"<replacement text for the quoted words>"}
 
-3. Checks: 0 to 3 real-world factual claims in the draft that a reader could look up (who, when, where, how many, first, biggest). Skip opinions, the writer's own experience and invented story events.
+3. Shots (only when the writing type is a video script): 0 to 2 ideas for what the viewer sees. The draft holds only the words that are spoken. What is shown, and the text that appears on screen, belong to the scene and never to the draft.
+{"k":"shot","quote":"<exact words of the spoken line this goes with>","show":"<what the picture shows and how it moves, max 14 words>","text":"<on-screen text, max 5 words>"}
+- Use a shot line, never a tip, when a rule is about visuals, cuts, b-roll or on-screen text. "show" or "text" may be left out.
+- If the draft itself contains a stage direction or on-screen text that is not meant to be spoken (such as "Cut to the cooling towers", "[Cut to ...]", "Text: 112 cm", "B-roll of ..."), send a shot line whose "quote" is exactly those words, with "inscript":true, and put the direction in "show" and the on-screen words in "text". The app moves them out of the draft. One line per run of such words.
+
+4. Checks: 0 to 3 real-world factual claims in the draft that a reader could look up (who, when, where, how many, first, biggest). Skip opinions, the writer's own experience and invented story events.
 {"k":"check","quote":"<exact words of the claim>","query":"<the name of the thing the claim is about, as an encyclopedia article title, 1 to 3 words>"}
 For "dim sims were invented in Australia" the query is "dim sim": the subject alone, singular, with no verbs, places or dates added.
 
-4. Stages: one line for every stage in the pack's structure, in the pack's order.
+5. Stages: one line for every stage in the pack's structure, in the pack's order.
 {"k":"stage","id":"<stage id>","state":"done|weak|missing","note":"<max 6 words>"}
 
-5. Question: 1 question whose answer the next draft needs.
+6. Question: 1 question whose answer the next draft needs.
 {"k":"ask","text":"<max 12 words>"}
 
-6. Next lines: 2 different sentences the writer could add next, in the draft's own voice and tense.
+7. Next lines: 2 different sentences the writer could add next, in the draft's own voice and tense.
 {"k":"next","text":"<one sentence, max 18 words>"}
-
-7. Score: exactly once, last.
-{"k":"score","specific":0-100,"clear":0-100,"structure":0-100,"line":"<verdict, max 10 words>"}
 
 ## When a tip is allowed
 
@@ -45,14 +47,9 @@ For "dim sims were invented in Australia" the query is "dim sim": the subject al
 - "tip" is an instruction in plain words: say what to do. No praise, no hedging, no "consider", no jargon from the rule's name.
 - "quote" must be copied character for character from the draft so the app can find and highlight it. Keep it to the smallest span that shows the problem.
 - "fix" replaces the quoted span and must read correctly in the sentence around it. It keeps the writer's subject, meaning, voice and tense. It never changes the topic.
+- A fix and a next line hold only words the writer would say or the reader would read. Never put a stage direction, a cut, a camera note or on-screen text in them, with or without square brackets: no "[Cut to ...]", no "[Text: ...]". Those go in a shot line. To cut the quoted words entirely, send "fix":"".
 - When the pack says "factual": true, a fix may only cut, reorder or sharpen what the draft already says. If the better version would add any information that is not in the draft (a fact, name, number, date, result, motive or claim about what someone wanted), leave "fix" out and let the tip say what to add. The same goes for next lines: never state anything the draft has not established. A next line may leave a slot in square brackets for the writer to fill, such as "[who] first made them in [year]."
 - When "factual" is false (fiction), a fix may invent a concrete, picturable detail the writer can change.
-
-## Scores and verdict
-
-- "specific" and "clear" judge the words that are on the page, whatever the length. One line that names its subject and makes a concrete claim scores 70 or more on both.
-- "structure" is the share of stages that are done.
-- The verdict leads with what works when something does, then the one next move.
 
 ## Fact check mode
 
@@ -100,6 +97,7 @@ Rules for facts:
 - When "factual" is yes and no source holds what a blank or a rewrite needs, leave the blank in square brackets as it is and say in the answer what to search for. A wrong fact is worse than a blank.
 - When "factual" is no (fiction), invent concrete, picturable details freely.
 - Never add square-bracket blanks of your own unless the instruction asks for a template.
+- The draft holds only the words that are spoken or read. Never write stage directions, cuts, camera notes or on-screen text into it, and when filling blanks leave any "[Cut to ...]" or "[Text: ...]" untouched: the app moves those to the scene.
 
 ## Fill mode
 

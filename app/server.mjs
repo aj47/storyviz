@@ -40,6 +40,7 @@ function buildProject(id, b) {
     scenes: Array.isArray(b.scenes) ? b.scenes.slice(0, 200) : [], coach: b.coach && typeof b.coach === 'object' ? b.coach : null,
     research: Array.isArray(b.research) ? b.research.slice(0, 30) : [],
     fills: Array.isArray(b.fills) ? b.fills.slice(0, 60) : [],
+    dismissed: Array.isArray(b.dismissed) ? b.dismissed.slice(-200).map((x) => String(x).slice(0, 300)) : [],
     createdAt: Number(b.createdAt) || Date.now(), updatedAt: Date.now(),
   };
 }
@@ -358,7 +359,8 @@ const sentenceAround = (text, i, len) => {
 };
 function blanksIn(text) {
   const out = []; let m; BLANK.lastIndex = 0;
-  while ((m = BLANK.exec(text))) if (!out.some((b) => b.slot === m[0])) out.push({ slot: m[0], sentence: sentenceAround(text, m.index, m[0].length).slice(0, 300) });
+  // [Cut to ...] and [Text: ...] are stage directions for the scene, not blanks in the spoken script.
+  while ((m = BLANK.exec(text))) if (!/^\[\s*(cut to|text\s*:|on[- ]?screen|b-?roll|show|visual|shot|sfx|caption\s*:)/i.test(m[0]) && !out.some((b) => b.slot === m[0])) out.push({ slot: m[0], sentence: sentenceAround(text, m.index, m[0].length).slice(0, 300) });
   return out;
 }
 const topicLine = (text) => (String(text).split(/\n/).find((l) => l.trim().length > 8) || '').replace(BLANK, '').trim().slice(0, 140);
@@ -463,6 +465,7 @@ function sceneRequest(b) {
     parts.unshift('task: update');
     parts.push(`the paragraph before the edit:\n"""\n${String(b.before || '').slice(0, 2500)}\n"""`, `scene on screen now, drawn for the paragraph before the edit:\n${String(b.scene || '').slice(0, 24000)}`);
   }
+  if (b.caption) parts.push(`on-screen text set by the writer (use exactly this as the shot line's "text"):\n"""\n${String(b.caption).slice(0, 60)}\n"""`);
   if (b.guide) parts.push(`direction from the writer:\n"""\n${String(b.guide).slice(0, 300)}\n"""`);
   if (b.improve) {
     parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish', 'motion'].includes(b.focus) ? b.focus : 'polish'}`);

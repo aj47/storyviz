@@ -17,7 +17,8 @@
   </div>
   <button class="save" id="saveBtn" title="Save now (⌘S)"></button>
   <span class="grow"></span>
-  <button class="quiet" id="queueBtn" title="See what is waiting for the model, and cancel or resend it">Queue</button>
+  <button class="activity" id="queueBtn" title="What the AI is working on now. Click to stop, steer or choose what it spends time on."></button>
+  <button class="quiet" id="pauseBtn" title="Stop starting new automatic work. Requests already sent keep going."></button>
   <button class="quiet" id="historyBtn" title="Every earlier version of this project: text, drawings and notes. Restore any of them.">History</button>
   <button class="quiet" id="openBtn" title="Open a project (⌘O)">Open</button>
   <button class="solid" id="newBtn">New</button>
@@ -33,27 +34,35 @@
     <div class="stats" id="stats"></div>
   </section>
 
-  <section class="stage-wrap">
-    <div id="stage"></div>
-    <div class="phone" id="phone" hidden>
-      <div class="phone-top"><span id="beat"></span><span id="sec"></span></div>
-      <div class="phone-caption" id="caption"></div>
-    </div>
-    <div class="overlay top-left"><div class="title" id="title"></div></div>
-    <button class="overlay top-right hud" id="hud" hidden><b id="hudBig"></b><span id="hudSmall"></span></button>
-    <div class="overlay bottom">
-      <div class="tools">
-        <div class="menu-wrap">
-          <button id="styleBtn" title="Pick a visual style"></button>
-          <div class="menu up" id="styleMenu" hidden></div>
-        </div>
-        <label class="sw" title="Switch to a new visual style every 7 seconds"><input type="checkbox" id="restyleSw"><i></i>Restyle</label>
-        <label class="sw" title="Keep working on each scene: more detail, setting and background, then motion that acts out the paragraph"><input type="checkbox" id="improveSw"><i></i>Keep improving</label>
-        <label class="sw" title="On: the model imagines whatever the text leaves out. Off: only what you wrote is drawn, and anything vague shows as a pale ghost or a ? box."><input type="checkbox" id="fillSw"><i></i>Fill gaps</label>
-        <button id="guideBtn" title="Tell the illustrator what to change in this drawing">Guide</button>
-        <button id="redrawBtn" title="Draw this scene again">Redraw</button>
+  <section class="center">
+    <div class="stage-wrap">
+      <div id="stage"></div>
+      <div class="phone" id="phone" hidden>
+        <div class="phone-top"><span id="beat"></span><span id="sec"></span></div>
+        <div class="phone-caption" id="caption"></div>
       </div>
+      <div class="overlay top-left"><div class="title" id="title"></div></div>
+      <button class="overlay top-right hud" id="hud" hidden><b id="hudBig"></b><span id="hudSmall"></span></button>
+      <div class="overlay bottom">
+        <div class="tools">
+          <div class="menu-wrap">
+            <button id="styleBtn" title="Pick a visual style"></button>
+            <div class="menu up" id="styleMenu" hidden></div>
+          </div>
+          <label class="sw" title="Switch to a new visual style every 7 seconds"><input type="checkbox" id="restyleSw"><i></i>Restyle</label>
+          <label class="sw" title="On: the model imagines whatever the text leaves out. Off: only what you wrote is drawn, and anything vague shows as a pale ghost or a ? box."><input type="checkbox" id="fillSw"><i></i>Fill gaps</label>
+          <button id="redrawBtn" title="Draw this scene again from scratch">Redraw</button>
+        </div>
+      </div>
+    </div>
+    <!-- Everything about how the current scene looks lives here, so none of it has to be written into the script. -->
+    <div class="scene-bar">
       <div class="pages" id="pages"></div>
+      <div class="insp" id="insp">
+        <label class="insp-row" id="capRow"><span>On-screen text</span><input id="capInput" class="field" maxlength="60" spellcheck="false" placeholder="Words shown on screen during this scene"></label>
+        <form class="insp-row" id="dirForm"><span>Direction</span><input id="dirInput" class="field" maxlength="300" spellcheck="false" placeholder="What to show and how it moves, e.g. cut to the cooling towers misting water"><button class="mini" id="dirBtn">Send</button></form>
+        <div class="insp-row" id="motionRow"><span>Motion</span><div class="chips" id="motion"></div><button class="mini" id="animateBtn" title="Ask the illustrator to choreograph this scene again">Re-animate</button></div>
+      </div>
     </div>
   </section>
 
@@ -62,10 +71,7 @@
       <h2>Coach</h2>
       <span class="coach-status" id="coachStatus"></span>
       <button class="mini" id="reviewBtn" hidden>Review</button>
-      <label class="sw" title="Review the draft every time you pause typing"><input type="checkbox" id="liveSw"><i></i>Auto review</label>
     </div>
-    <div class="verdict" id="verdict" hidden></div>
-    <div class="scores" id="scores" hidden></div>
     <nav class="tabs" id="tabs">
       <button data-tab="tips">Tips<i id="tipsCount"></i></button>
       <button data-tab="structure">Structure<i id="stagesCount"></i></button>
@@ -81,6 +87,7 @@
       <div id="tips"></div>
       <button class="more" id="moreTips" hidden></button>
       <div id="goodWrap" hidden><h3>Working well</h3><div id="good"></div></div>
+      <details id="unsureWrap" hidden><summary></summary><div id="unsure"></div></details>
     </div>
     <div class="pane" data-pane="structure" hidden>
       <h3 id="structureName"></h3>
@@ -113,9 +120,22 @@
 </dialog>
 
 <dialog id="queueDlg">
-  <div class="dlg-head"><h2>Queue</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <div class="dlg-head"><h2>Activity</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <h3>What the AI does on its own</h3>
+  <div class="autos">
+    <label class="sw" title="Draw a scene for each paragraph as you write"><input type="checkbox" id="autoDraw"><i></i>Draw scenes</label>
+    <label class="sw" title="Add motion that acts out the paragraph"><input type="checkbox" id="autoMotion"><i></i>Add motion</label>
+    <label class="sw" title="Keep adding detail, setting and background to each scene, up to four passes"><input type="checkbox" id="improveSw"><i></i>Improve looks</label>
+    <label class="sw" title="Review the draft every time you pause typing"><input type="checkbox" id="liveSw"><i></i>Review the draft</label>
+    <label class="sw" title="Check the draft's factual claims against the web"><input type="checkbox" id="autoFacts"><i></i>Check facts</label>
+    <label class="sw" title="Suggest what goes in each [blank]"><input type="checkbox" id="autoBlanks"><i></i>Suggest blanks</label>
+  </div>
+  <div class="autos-acts"><button class="mini" id="pauseBtn2"></button><button class="mini bad" id="stopAllBtn" title="Cancel every request and pause">Stop everything</button></div>
+  <h3>Working now</h3>
   <p class="empty" id="queueEmpty">Nothing is waiting.</p>
   <div id="queue"></div>
+  <h3>Time spent this session</h3>
+  <div id="spent"></div>
 </dialog>
 
 <dialog id="historyDlg">
@@ -123,15 +143,6 @@
   <p class="empty">Every change is kept: typing, agent edits, filled blanks and each drawing. Restoring a version is itself a new version, so nothing is lost.</p>
   <p class="empty" id="historyEmpty"></p>
   <div id="history"></div>
-</dialog>
-
-<dialog id="guideDlg">
-  <div class="dlg-head"><h2 id="guideTitle">Guide this drawing</h2><button class="x" data-close aria-label="Close">×</button></div>
-  <form id="guideForm" class="ask">
-    <textarea id="guideText" class="field" rows="3" maxlength="300" spellcheck="false" placeholder="What should change? e.g. set it at night, or show the server room instead of the people"></textarea>
-    <button class="solid">Send</button>
-  </form>
-  <p class="empty">The direction stays with this scene through later edits. Send it empty to remove it.</p>
 </dialog>
 
 <dialog id="rulesDlg">
