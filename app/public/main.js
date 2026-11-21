@@ -263,13 +263,16 @@ $('#sampleBtn').onclick = () => { ta.value = S.pack.placeholder || ''; ta.focus(
 
 // ---------- editor ----------
 let sceneTimer = 0, coachTimer = 0;
+const SCENE_PAUSE = 2500, COACH_PAUSE = 4000, IMPROVE_PAUSE = 6000;
 function onText(immediate = false, changed = true) {
   S.paras = paragraphs(ta.value); syncCurrent(); renderStats(); renderBackdrop(); renderPages();
   $('#sampleBtn').hidden = ta.value.length > 0 || !S.pack?.placeholder;
   S.coach.tips.forEach((t) => tipEls.get(t)?.classList.toggle('stale', findQuote(ta.value, t.quote) < 0));
   if (changed) markDirty();
-  clearTimeout(sceneTimer); sceneTimer = setTimeout(schedule, immediate ? 50 : 900);
-  clearTimeout(coachTimer); if (S.live) coachTimer = setTimeout(runCoach, immediate ? 200 : 1600);
+  // Every request waits about a minute in the queue, so nothing is sent until the writer has really paused:
+  // a request for a half-typed sentence would be stale before it started, and its replacement queues again.
+  clearTimeout(sceneTimer); sceneTimer = setTimeout(schedule, immediate ? 50 : SCENE_PAUSE);
+  clearTimeout(coachTimer); if (S.live) coachTimer = setTimeout(runCoach, immediate ? 200 : COACH_PAUSE);
   renderCoach();
 }
 function moved(force = false) { if (syncCurrent() || force) { renderBackdrop(); renderPages(); showCurrent(); } }
@@ -446,7 +449,9 @@ let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
   if (!S.improve || improving || !S.pack || S.pack.visual === 'diagram' || document.hidden) return null;
-  if (performance.now() - lastEdit < 2500 || [...S.scenes.values()].some(flying)) return null;
+  // Improvement passes share the queue with everything else, so they wait until nothing the writer asked for is in it.
+  const asked = S.coach.runs.size || S.coach.factBusy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
+  if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
   for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && (sc.round || 0) < PLAN.length && !sc.impError) return sc; }
   return null;
