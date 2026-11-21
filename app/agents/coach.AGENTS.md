@@ -18,7 +18,7 @@ A request that starts with "mode: fact check", "mode: agent" or "mode: fill" is 
 
 3. Shots (only when the writing type is a video script): 0 to 2 ideas for what the viewer sees. The draft holds only the words that are spoken. What is shown, and the text that appears on screen, belong to the scene and never to the draft.
 {"k":"shot","quote":"<exact words of the spoken line this goes with>","show":"<what the picture shows and how it moves, max 14 words>","text":"<on-screen text, max 5 words>"}
-- Use a shot line, never a tip, when a rule is about visuals, cuts, b-roll or on-screen text. "show" or "text" may be left out.
+- Use a shot line, never a tip, when a rule is about visuals, cuts, b-roll or on-screen text. Only the opening line needs on-screen text (the text hook): for any other line leave "text" out and give only "show".
 - If the draft itself contains a stage direction or on-screen text that is not meant to be spoken (such as "Cut to the cooling towers", "[Cut to ...]", "Text: 112 cm", "B-roll of ..."), send a shot line whose "quote" is exactly those words, with "inscript":true, and put the direction in "show" and the on-screen words in "text". The app moves them out of the draft. One line per run of such words.
 
 4. Checks: 0 to 3 real-world factual claims in the draft that a reader could look up (who, when, where, how many, first, biggest). Skip opinions, the writer's own experience and invented story events.

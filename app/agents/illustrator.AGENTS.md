@@ -83,6 +83,7 @@ diorama — a story scene. env first, then the main character or subject, then w
 
 storyboard — the paragraph is one beat of a short vertical video script. After env, output exactly one shot line, then draw what the viewer would see during that beat, framed for a tall phone screen (keep everything within x -4..4):
 {"t":"shot","beat":"hook|setup|proof|payoff|cta","cam":"wide|medium|close|low|top","sec":4,"text":"on-screen caption, max 5 words"}
+"text" is the text hook and belongs to paragraph number 1 only. For every other paragraph leave "text" out, unless the request gives on-screen text set by the writer.
 sec is how long the beat takes to say out loud at about 2.6 words a second. If the beat is a person talking to camera, draw the presenter and the thing they are talking about. 5 to 12 obj lines, then 3 to 6 act/count lines that act the beat out. The steps are spread over the beat's "sec", so the motion keeps pace with the voice.
 
 diagram — the paragraph is engineering documentation. Do not draw scenery. After env (use "light":"indoor"), output nodes on a grid and edges between them:
@@ -136,6 +137,7 @@ What each focus is for:
 - setting: the place around the subject. Start with an env line (all its fields) that gives the sky, ground and light a mood that fits, then 4 to 8 new obj or many lines: the surface things stand on and what the paragraph implies is nearby. Do not redraw existing objects.
 - background: depth and atmosphere, 4 to 8 new obj or many lines: distant things at negative z, things in the sky, and small animated props. Do not redraw existing objects and do not output env.
 - motion: choreograph the scene so its motion tells the paragraph (see Motion). Output 3 to 6 act and count lines. To make a thing arrive later, output its obj line again, unchanged except for an added "step" and "in". You may add up to two small new obj lines that the motion needs (a droplet or packet for a flow, steam to rise). Change nothing else: no env, no many, no redrawing for looks.
+- refine: the scene is finished, and this pass runs again and again, so make it better without making it bigger. Add no new objects. Redraw the one or two things that still look weakest (same ids, same "at"), fix anything that floats, overlaps another thing or hides the subject, and improve one act or count if the motion does not yet show what the paragraph says. You may remove one thing that clutters the picture with {"t":"drop","id":"<id>"}. Pick different things from the ones that already look finished. 1 to 4 lines.
 - polish: look at the whole scene. Redraw the one or two things that still look weakest, and add two or three small details that tell the story.
 
 ## Colour

@@ -541,6 +541,8 @@ function guideScene(idx, guide, caption) {
 // The strip under the stage holds everything about how the current scene looks: the words on screen, the
 // direction given to the illustrator, and the motion. None of it is part of the script.
 const sceneNow = () => activeFor(S.cur) || sceneFor(S.cur);
+// Only the opening scene carries on-screen text by default (the text hook). Any other scene shows text only if the writer typed some.
+const captionOf = (sc) => (sc ? sc.caption ?? (sc.idx === 0 ? sc.shot?.text : '') ?? '' : '');
 function setCaption(idx, text) {
   const sc = activeFor(idx) || sceneFor(idx); if (!sc) return;
   sc.caption = text.trim().slice(0, 60) || undefined;
@@ -565,7 +567,7 @@ function renderInspector() {
   const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || (l.t === 'obj' && l.step)) : [];
   const sig = [S.cur, sc?.key, sc?.caption, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
   if (sig === inspSig) return; inspSig = sig;
-  if (document.activeElement !== cap) { cap.value = sc?.caption ?? sc?.shot?.text ?? ''; cap.placeholder = sc?.shot?.text || 'Words shown on screen during this scene'; }
+  if (document.activeElement !== cap) { cap.value = captionOf(sc); cap.placeholder = sc?.idx === 0 ? 'The text hook shown on screen' : 'None. Type here to put words on screen in this scene'; }
   if (document.activeElement !== dir) dir.value = sc?.guide || '';
   const busy = sc?.wantMotion || sc?.imps?.some((i) => i.focus === 'motion');
   $('#motion').innerHTML = moves.sort((a, b) => (a.step || 0) - (b.step || 0)).map((l) => `<span class="chip"><b>${Number(l.step) || 1}</b>${esc(motionWords(l))}`
@@ -598,12 +600,19 @@ $('#animateBtn').onclick = () => {
 // resend it with the current text, or resend a drawing with a direction.
 let qSeq = 0, queueSig = ''; const qIds = new WeakMap();
 const qId = (o) => { if (!qIds.has(o)) qIds.set(o, ++qSeq); return qIds.get(o); };
+// When nothing is in the queue, the header says why, so a quiet moment never looks like a stall.
+function idleWhy() {
+  if (performance.now() - lastEdit < IMPROVE_PAUSE) return 'Waiting for you to pause';
+  if (document.hidden) return 'Resting while this tab is hidden';
+  if (!S.improve) return 'All caught up. Improve looks is off';
+  return 'About to refine the next scene';
+}
 const mins = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`);
 function queueItems() {
   const c = S.coach, items = [], wanted = new Set(S.paras.map((p) => keyOf(p.text)));
   for (const sc of S.scenes.values()) {
     if (flying(sc)) { const stale = !wanted.has(sc.key); items.push({ o: sc, kind: 'scene', title: `Scene ${sc.idx + 1}`, sub: [sc.updating ? 'update' : 'new drawing', stale ? 'older wording' : '', sc.guide ? 'guided' : ''].filter(Boolean).join(' · '), text: sc.text, stale }); }
-    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: imp.focus === 'motion' ? 'adding motion' : `improving ${imp.focus}`, text: sc.text });
+    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: imp.focus === 'motion' ? 'adding motion' : imp.focus === 'refine' ? 'refining' : `improving ${imp.focus}`, text: sc.text });
   }
   for (const r of c.runs.values()) { const stale = r.text !== ta.value; items.push({ o: r, kind: 'coach', title: 'Review', sub: stale ? 'older draft' : '', text: r.text, stale }); }
   if (c.factBusy) items.push({ o: c.factBusy, kind: 'facts', title: 'Fact check', sub: '', text: c.factBusy.quotes.join(' · ') });
@@ -616,7 +625,7 @@ function renderQueue() {
   // The header always says what is being worked on right now, and for how long.
   const top = items.find((it) => it.o.status === 'gen') || items.slice().sort((a, b) => (a.o.t0 || 0) - (b.o.t0 || 0))[0];
   const pill = $('#queueBtn'); pill.className = 'activity ' + (S.paused && !top ? 'paused' : top ? (top.o.status === 'gen' ? 'gen' : 'wait') : '');
-  const words = top ? `${top.title}${top.sub ? ' · ' + top.sub : ''} · ${top.o.status === 'gen' ? 'answering' : top.o.status === 'search' ? 'searching' : Math.round((performance.now() - top.o.t0) / 1000) + 's in queue'}` : S.paused ? 'Paused' : 'Nothing running';
+  const words = top ? `${top.title}${top.sub ? ' · ' + top.sub : ''} · ${top.o.status === 'gen' ? 'answering' : top.o.status === 'search' ? 'searching' : Math.round((performance.now() - top.o.t0) / 1000) + 's in queue'}` : S.paused ? 'Paused' : idleWhy();
   pill.innerHTML = `<b class="lamp"></b><span>${esc(words)}</span>${items.length > 1 ? `<i>+${items.length - 1}</i>` : ''}`;
   if (!$('#queueDlg').open) { queueSig = ''; return; }
   $('#spent').innerHTML = [...S.spent].map(([kind, v]) => `<div><b>${esc(kind)}</b><span>${v.n} request${v.n === 1 ? '' : 's'}</span><span>${mins(v.wait)} in queue</span><span>${mins(v.gen)} answering</span>${v.stopped ? `<span>${v.stopped} stopped</span>` : ''}</div>`).join('') || 'No requests yet.';
@@ -688,16 +697,22 @@ function nextToImprove() {
   const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
   if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
-  for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && ((S.improve && (sc.round || 0) < PLAN.length) || (S.auto.motion && needsMotion(sc))) && !sc.impError) return sc; }
-  return null;
+  const ready = order.map((i) => activeFor(i)).filter((sc) => sc && sc.status === 'done' && sc.lines.length && !sc.impError);
+  const first = ready.find((sc) => (S.improve && (sc.round || 0) < PLAN.length) || (S.auto.motion && needsMotion(sc)));
+  if (first || !S.improve) return first || null;
+  // Every scene has had its passes. Improving never stops: it goes round the scenes, the one on screen first,
+  // refining whichever has had the fewest turns.
+  return ready.slice().sort((a, b) => (a.refined || 0) - (b.refined || 0))[0] || null;
 }
 async function improveRound(sc) {
   improving = sc; sc.imps = [];
   const round = sc.round || 0, motion = sc.wantMotion || (S.auto.motion && needsMotion(sc)); sc.wantMotion = false;
-  const results = await Promise.all((motion ? ['motion'] : PLAN[round]).map((focus) => improveOnce(sc, focus)));
+  const refine = !motion && round >= PLAN.length;
+  const results = await Promise.all((motion ? ['motion'] : refine ? ['refine'] : PLAN[round]).map((focus) => improveOnce(sc, focus)));
   sc.imps = null; improving = null;
   if (results.includes('aborted')) return;
   if (results.every((r) => r === 'error')) sc.impError = true;
+  else if (refine) { sc.refined = (sc.refined || 0) + 1; inspSig = ''; if (results[0] > 0) markDirty(`Scene ${sc.idx + 1} refined`); }
   else if (motion) { sc.motionTried = true; inspSig = ''; markDirty(results[0] > 0 ? `Scene ${sc.idx + 1} animated` : 'Edited'); }
   // A round that changed nothing means Kimi has nothing left to add.
   else { const added = results.some((r) => r > 0); sc.round = added ? round + 1 : PLAN.length; markDirty(added ? `Scene ${sc.idx + 1} improved (${PLAN[round].join(', ')})` : 'Edited'); }
@@ -712,14 +727,17 @@ async function improveOnce(sc, focus) {
   const body = {
     mode: S.pack.visual, strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'), paragraph: sc.text,
-    improve: true, focus, scene: sc.raw.join('\n'),
+    // A refining pass must be a new answer each time; a replay from the cache would change nothing.
+    improve: true, focus, fresh: focus === 'refine', scene: sc.raw.join('\n'),
   };
   try {
     await sse('/api/scene', body, imp.ctrl.signal, (ev) => {
       if (ev.type === 'prompt') imp.prompt = ev.text;
       else if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
-        const o = parseLine(ev.raw); if (!o || !(focus === 'motion' ? ['obj', 'act', 'count'] : ['obj', 'many', 'env']).includes(o.t)) return;
+        const o = parseLine(ev.raw); if (!o || !(focus === 'motion' ? ['obj', 'act', 'count'] : focus === 'refine' ? ['obj', 'act', 'count', 'drop'] : ['obj', 'many', 'env']).includes(o.t)) return;
+        // Refining may redraw what is there, never add: the scene must not grow without end.
+        if (focus === 'refine' && o.t === 'obj' && !had.has(String(o.id))) return;
         if (o.t === 'act') for (const f of ['id', 'of', 'from', 'to']) if (renamed.has(String(o[f]))) o[f] = renamed.get(String(o[f]));
         if (o.t === 'env') { if (focus !== 'setting') return; delete o.title; }
         else if (o.t === 'obj' && o.id != null && !had.has(String(o.id))) { const id = `${focus}_${o.id}`; renamed.set(String(o.id), id); o.id = id; }
@@ -749,7 +767,7 @@ function showCurrent() {
 function showShot(o) {
   const on = Boolean(o) && S.pack?.visual === 'storyboard';
   $('#phone').hidden = !on; if (!on) return;
-  $('#beat').textContent = o.beat || ''; $('#sec').textContent = o.sec ? `${o.sec}s` : ''; $('#caption').textContent = S.shown?.caption ?? o.text ?? '';
+  $('#caption').textContent = captionOf(S.shown);
 }
 
 function renderPages() {
@@ -780,8 +798,8 @@ function tick() {
     if (sc.cached) small = 'replaying'; else { big = `≈${Math.round(sc.chars / 1.85 / secs)}`; small = 'tokens/s'; }
   } else if (sc?.status === 'done' && sc.imps?.some((i) => i.status !== 'over')) {
     const gen = sc.imps.find((i) => i.status === 'gen'), waiting = sc.imps.filter((i) => i.status === 'wait');
-    if (gen) { cls = 'gen'; const secs = Math.max(0.05, (performance.now() - gen.genStart) / 1000); if (!gen.cached) big = `≈${Math.round(gen.chars / 1.85 / secs)}`; small = `${gen.cached ? '' : 'tokens/s · '}adding ${gen.focus}`; }
-    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · ${waiting[0]?.focus === 'motion' ? 'adding motion' : `improving (${waiting.map((i) => i.focus).join(', ')})`}`; }
+    if (gen) { cls = 'gen'; const secs = Math.max(0.05, (performance.now() - gen.genStart) / 1000); if (!gen.cached) big = `≈${Math.round(gen.chars / 1.85 / secs)}`; small = `${gen.cached ? '' : 'tokens/s · '}${gen.focus === 'refine' ? 'refining' : 'adding ' + gen.focus}`; }
+    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · ${waiting[0]?.focus === 'motion' ? 'adding motion' : waiting[0]?.focus === 'refine' ? 'refining' : `improving (${waiting.map((i) => i.focus).join(', ')})`}`; }
   } else if (sc?.status === 'done' && sc.done) {
     if (sc.cached) small = 'replayed from cache';
     else { big = `≈${sc.done.tps}`; small = `tokens/s · ${(sc.done.genMs / 1000).toFixed(1)}s`; tip = `${sc.lines.length} lines in ${(sc.done.genMs / 1000).toFixed(1)}s after ${(sc.done.waitMs / 1000).toFixed(0)}s in the queue`; }

@@ -148,10 +148,6 @@ main { height: calc(100% - 48px); display: grid; grid-template-columns: minmax(3
 
 .phone { position: absolute; top: 0; bottom: 0; left: 50%; aspect-ratio: 9 / 16; transform: translateX(-50%); pointer-events: none;
   box-shadow: 0 0 0 4000px rgba(5, 6, 10, .62); border-left: 2px solid rgba(255, 255, 255, .5); border-right: 2px solid rgba(255, 255, 255, .5); }
-.phone-top { position: absolute; top: 64px; left: 0; right: 0; display: flex; justify-content: center; gap: 8px; }
-.phone-top span { background: rgba(12, 14, 22, .82); padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }
-.phone-top span:empty { display: none; }
-#beat { color: var(--accent); }
 .phone-caption { position: absolute; left: 7%; right: 7%; bottom: 23%; text-align: center; font-size: clamp(20px, 2.6vw, 34px); font-weight: 850; line-height: 1.12;
   color: #fff; text-shadow: 0 0 0 #000, 0 3px 0 #000, 0 0 18px rgba(0, 0, 0, .8); -webkit-text-stroke: 1.2px #000; paint-order: stroke fill; }
 
