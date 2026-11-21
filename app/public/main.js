@@ -11,7 +11,7 @@ const S = {
   packs: [], pack: null, project: null, projects: [],
   strict: !flag('fill', true), restyle: flag('restyle', true), live: flag('live', true), improve: flag('improve', true), styleIdx: 0,
   scenes: new Map(), seq: 0, cur: 0, shown: null, paras: [],
-  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null },
+  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null, research: [] },
 };
 const tipEls = new WeakMap();
 
@@ -103,7 +103,7 @@ function loadProject(p) {
     S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
-  applyPack(); restoreCoach(p.coach);
+  applyPack(); restoreCoach(p.coach); restoreResearch(p.research);
   onText(true, false);
 }
 
@@ -141,6 +141,7 @@ function markDirty() {
 }
 function snapshot(p) {
   p.name = $('#name').value.trim() || 'Untitled'; p.text = ta.value; p.pack = S.pack.id; p.coach = S.coach.saved;
+  p.research = S.coach.research.filter((r) => r.status === 'done').map(({ q, sources, lines }) => ({ q, sources, lines }));
   const kept = new Map();
   S.paras.forEach((para, i) => {
     const sc = S.scenes.get(keyOf(para.text));
@@ -550,12 +551,13 @@ function tick() {
   $('#coachStatus').textContent = runs.some((r) => r.status === 'gen') ? 'reading…'
     : waiting.length ? `in queue ${Math.round((performance.now() - Math.min(...waiting.map((r) => r.t0))) / 1000)}s` : S.coach.factBusy ? 'checking facts…' : '';
   $('#reviewBtn').disabled = runs.length > 0 || ta.value.trim().length < 3;
+  researchStatus();
   $('#redrawBtn').disabled = !S.shown?.lines.length || Boolean(act && flying(act));
 }
 
 // ---------- coach ----------
 function setTab(tab) {
-  if (!['tips', 'structure', 'ideas'].includes(tab)) return;
+  if (!['tips', 'structure', 'ideas', 'research'].includes(tab)) return;
   S.coach.tab = tab;
   $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   $$('.pane').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
@@ -576,6 +578,7 @@ function renderCoach() {
   const c = S.coach; const tips = $('#tips').children.length, ideas = $('#asks').children.length + $('#next').children.length + $('#details').children.length;
   const stages = S.pack?.structure?.stages || []; const done = stages.filter((g) => c.states[g.id]?.state === 'done').length;
   $('#tipsCount').textContent = tips || ''; $('#ideasCount').textContent = ideas || '';
+  $('#researchCount').textContent = c.research.reduce((n, r) => n + r.lines.filter((o) => o.k === 'finding').length, 0) || '';
   $('#stagesCount').textContent = stages.length && c.shownSeq ? `${done}/${stages.length}` : '';
   $('#reviewBtn').hidden = S.live;
   $('#detailsWrap').hidden = !$('#details').children.length;
@@ -670,7 +673,7 @@ function coachLine(run, o) {
   }
   const rule = S.pack.rules.find((r) => r.id === o.rule); const src = rule && S.pack.sources.find((s) => s.id === rule.source);
   const link = (url, text, title = '') => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${esc(text)}</a>` : `<span title="${esc(title)}">${esc(text)}</span>`);
-  const wiki = o.url ? link(o.url, 'Wikipedia', o.title || '') : '';
+  const wiki = o.url ? link(o.url, hostOf(o.url), o.title || '') : '';
   const hover = (el) => { el.onmouseenter = () => { c.hot = o; renderBackdrop(); }; el.onmouseleave = () => { c.hot = null; renderBackdrop(); }; };
   // One card shape for coach tips and failed fact checks: what to do, the rewrite, where it comes from.
   const card = (text, from, cls = '') => {
@@ -707,6 +710,70 @@ function coachLine(run, o) {
   }
   renderCoach();
 }
+// ---------- research ----------
+// The writer sends the coach to look something up. Sources show as soon as the search returns;
+// the findings follow when the model has read them. A finding is one click away from the draft.
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'source'; } };
+function restoreResearch(saved) {
+  const c = S.coach; c.research.forEach((r) => r.ctrl?.abort());
+  c.research = (Array.isArray(saved) ? saved : []).filter((r) => r && r.q).map((r) => ({ q: String(r.q), sources: r.sources || [], lines: r.lines || [], status: 'done' }));
+  renderResearch();
+}
+function renderResearch() {
+  const c = S.coach;
+  $('#research').innerHTML = c.research.map((r, i) => {
+    const answer = r.lines.find((o) => o.k === 'answer');
+    const finds = r.lines.map((o, j) => (o.k !== 'finding' ? '' : `<div class="detail"><button class="line" data-i="${i}" data-j="${j}" title="Add to the draft">${esc(o.text)}</button><span class="src">${esc(o.who || '')}${o.who ? ' · ' : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title)}">${esc(hostOf(o.url))}</a></span></div>`)).join('');
+    const srcs = r.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(hostOf(s.url))}${s.published ? ' ' + esc(s.published.slice(0, 4)) : ''} · ${esc(s.title)}</a>`).join('');
+    return `<div class="rs"><div class="rs-q"><span>${esc(r.q)}</span><button class="mini" data-x="${i}" title="${r.status === 'done' || r.status === 'error' ? 'Remove' : 'Stop'}">×</button></div>`
+      + `<div class="rs-status ${r.status === 'error' ? 'err' : ''}" data-s="${i}"></div>`
+      + (answer ? `<div class="line answer">${esc(answer.text)}</div>` : '') + finds
+      + (srcs ? `<div class="rs-srcs"><h3>Sources read</h3>${srcs}</div>` : '') + '</div>';
+  }).join('');
+  researchStatus(); renderCoach();
+}
+function researchStatus() {
+  S.coach.research.forEach((r, i) => {
+    const el = $(`#research [data-s="${i}"]`); if (!el) return;
+    const secs = Math.round((performance.now() - (r.t0 || 0)) / 1000), n = r.sources.length;
+    el.textContent = r.status === 'search' ? 'Searching the web…'
+      : r.status === 'wait' ? `Found ${n} source${n === 1 ? '' : 's'}. Kimi reads them after the queue: ${secs}s`
+      : r.status === 'gen' ? 'Reading the sources…'
+      : r.status === 'error' ? (r.error || 'That did not work. Try again.') : '';
+    el.hidden = !el.textContent;
+  });
+}
+async function ask(q) {
+  const c = S.coach; q = q.trim(); if (!S.pack || q.length < 3) return;
+  const r = { q, sources: [], lines: [], status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
+  c.research.unshift(r); renderResearch();
+  try {
+    await sse('/api/ask', { pack: S.pack.id, text: ta.value, ask: q }, r.ctrl.signal, (ev) => {
+      if (ev.type === 'sources') { r.sources = ev.sources || []; r.status = 'wait'; }
+      else if (ev.type === 'first') r.status = 'gen';
+      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o) r.lines.push(o); }
+      else if (ev.type === 'done') r.status = 'done';
+      else if (ev.type === 'error') { r.status = 'error'; r.error = ev.message; }
+      if (c.research.includes(r)) renderResearch();
+    });
+    if (r.status !== 'done' && r.status !== 'error') r.status = r.lines.length ? 'done' : 'error';
+  } catch (e) { if (r.ctrl.signal.aborted) return; r.status = 'error'; r.error = String(e.message || e); }
+  if (!c.research.includes(r) || r.project !== S.project?.id) return;
+  if (r.status === 'done' && !r.lines.some((o) => o.k === 'finding') && !r.lines.some((o) => o.k === 'answer')) { r.status = 'error'; r.error = 'The sources did not answer that. Try other words.'; }
+  renderResearch(); if (r.status === 'done') markDirty();
+}
+$('#askText').addEventListener('input', () => { $('#askBtn').disabled = $('#askText').value.trim().length < 3; });
+$('#askText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#askForm').requestSubmit(); } });
+$('#askForm').addEventListener('submit', (e) => {
+  e.preventDefault(); const box = $('#askText'); if (box.value.trim().length < 3) return;
+  ask(box.value); box.value = ''; $('#askBtn').disabled = true;
+});
+$('#research').addEventListener('click', (e) => {
+  const c = S.coach, x = e.target.closest('[data-x]'), f = e.target.closest('button.line');
+  if (x) { const [r] = c.research.splice(Number(x.dataset.x), 1); r?.ctrl?.abort(); renderResearch(); markDirty(); }
+  else if (f) { const r = c.research[Number(f.dataset.i)]; const [o] = r.lines.splice(Number(f.dataset.j), 1); addLine(o.text); renderResearch(); markDirty(); }
+});
+
 function addLine(text) { const v = ta.value.replace(/\s+$/, ''); ta.value = v + (v ? ' ' : '') + text; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); onText(); }
 function selectQuote(q) { const i = findQuote(ta.value, q); if (i < 0) return; ta.focus(); ta.setSelectionRange(i, i + q.length); moved(true); }
 function applyFix(o) {

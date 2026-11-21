@@ -147,6 +147,17 @@ main { height: calc(100% - 48px); display: grid; grid-template-columns: minmax(3
 .card.fact .rule b { color: var(--blue); }
 .goodline a, .src, .src a { color: var(--muted); font-size: 11.5px; }
 .detail { margin-bottom: 10px; }
+.ask { display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
+.ask textarea { resize: vertical; min-height: 54px; font-size: 13px; line-height: 1.45; color: var(--text); font-family: var(--sans); }
+.rs { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.rs-q { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; font-weight: 600; line-height: 1.4; margin-bottom: 4px; }
+.rs-q span { flex: 1; min-width: 0; }
+.rs-status { color: var(--muted); font-size: 12px; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.rs-status.err { color: var(--bad); }
+.rs .answer { border-left: 2px solid var(--accent); border-radius: 0 10px 10px 0; }
+.rs-srcs { margin-top: 8px; }
+.rs-srcs a { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.4; margin-top: 4px; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-srcs a:hover, .detail .src a:hover { color: var(--text); }
 .detail .line { margin-bottom: 3px; }
 .detail .src { display: block; padding-left: 11px; }
 .card .foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }

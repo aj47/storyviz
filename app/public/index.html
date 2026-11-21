@@ -67,6 +67,7 @@
       <button data-tab="tips">Tips<i id="tipsCount"></i></button>
       <button data-tab="structure">Structure<i id="stagesCount"></i></button>
       <button data-tab="ideas">Ideas<i id="ideasCount"></i></button>
+      <button data-tab="research">Research<i id="researchCount"></i></button>
     </nav>
     <div class="pane" data-pane="tips">
       <p class="empty" id="tipsEmpty"></p>
@@ -83,6 +84,13 @@
       <div id="detailsWrap" hidden><h3>Facts you could use</h3><div id="details"></div></div>
       <div id="asksWrap" hidden><h3>Answer this</h3><div id="asks"></div></div>
       <div id="nextWrap" hidden><h3>Add a next line</h3><div id="next"></div></div>
+    </div>
+    <div class="pane" data-pane="research" hidden>
+      <form class="ask" id="askForm">
+        <textarea id="askText" class="field" rows="2" maxlength="400" spellcheck="false" placeholder="Send the coach to look something up, e.g. how much water AI actually uses"></textarea>
+        <button class="solid" id="askBtn" disabled>Research</button>
+      </form>
+      <div id="research"></div>
     </div>
     <button class="rules-link" id="rulesBtn"></button>
   </aside>

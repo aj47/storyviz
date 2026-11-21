@@ -37,6 +37,7 @@ function saveProject(id, b) {
   const p = {
     id, name: String(b.name || 'Untitled').slice(0, 80), pack: String(b.pack || ''), text: String(b.text || '').slice(0, 200_000),
     scenes: Array.isArray(b.scenes) ? b.scenes.slice(0, 200) : [], coach: b.coach && typeof b.coach === 'object' ? b.coach : null,
+    research: Array.isArray(b.research) ? b.research.slice(0, 30) : [],
     createdAt: Number(b.createdAt) || Date.now(), updatedAt: Date.now(),
   };
   const file = projectFile(id), tmp = file + '.tmp';
@@ -116,6 +117,7 @@ async function runAgent(res, send, agent, userText, { maxTokens = 6000, charsPer
       const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
       send({ type: 'first', waitMs: 0, cached: true });
       for (const raw of c.lines) { forward(raw, 0); await new Promise((r) => setTimeout(r, 25)); }
+      logRun(agent, userText, 'cached', { lines: c.lines.length });
       return { lines: c.lines, done: { ...c.done, cached: true } };
     } catch { /* fall through to a live run */ }
   }
@@ -175,20 +177,48 @@ async function runAgent(res, send, agent, userText, { maxTokens = 6000, charsPer
     };
     const cutOff = total >= maxTokens * 0.98;
     if (kept.length >= 2 && !cutOff) fs.writeFile(cacheFile, JSON.stringify({ agent, lines: kept, done }), () => {});
+    logRun(agent, userText, cutOff ? 'cutoff' : kept.length ? 'done' : 'empty', done);
     return { lines: kept, done };
   } catch (e) {
     if (!ac.signal.aborted) send({ type: 'error', message: String(e.message || e) });
+    logRun(agent, userText, ac.signal.aborted ? 'aborted' : 'error', { waitMs: first ? first - t0 : Date.now() - t0, lines: kept.length, error: ac.signal.aborted ? undefined : String(e.message || e).slice(0, 200) });
     return null;
   } finally {
     clearInterval(beat); res.off('close', onClose);
   }
 }
 
+// One line per model request in the journal: `journalctl -u storyviz -o cat | grep '^{'` is the app's own record
+// of what was asked, how long it sat in the queue and how it ended.
+function logRun(agent, userText, outcome, d = {}) {
+  console.log(JSON.stringify({
+    t: new Date().toISOString(), agent, kind: String(userText).split('\n')[0].slice(0, 40), outcome,
+    waitMs: d.waitMs, genMs: d.genMs, tokens: d.tokens, totalTokens: d.totalTokens, lines: d.lines, promptChars: userText.length, error: d.error,
+  }));
+}
+
 const parseLine = (raw) => { try { return JSON.parse(String(raw).trim().replace(/,\s*$/, '')); } catch { return null; } };
 
-// ---------- fact lookup ----------
-// The coach names the claims worth checking. The server looks each one up on Wikipedia (a plain
-// web request, not a model call) and hands the extracts back to Kimi to judge.
+// ---------- research ----------
+// Sources come from a web search through Exa's public MCP endpoint, which needs no key. Wikipedia is the
+// fallback when Exa is down or returns nothing. Neither is a model call, so both answer in about a second.
+async function exa(query, n = 4, clip = 1800) {
+  const res = await fetch('https://mcp.exa.ai/mcp', {
+    method: 'POST', signal: AbortSignal.timeout(12000),
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'web_search_exa', arguments: { query: String(query).slice(0, 400), numResults: n } } }),
+  });
+  if (!res.ok) throw new Error('exa ' + res.status);
+  const row = (await res.text()).split('\n').map((l) => (l.startsWith('data:') ? l.slice(5) : l).trim()).find((l) => l.startsWith('{'));
+  const j = JSON.parse(row || '{}');
+  if (j.error || j.result?.isError) throw new Error('exa: ' + String(j.error?.message || j.result?.content?.[0]?.text || 'failed').slice(0, 160));
+  const text = (j.result?.content || []).map((c) => c.text || '').join('\n');
+  return text.split(/\n(?=Title: )/).map((block) => {
+    const title = /^Title: (.+)$/m.exec(block)?.[1], url = /^URL: (https?:\S+)$/m.exec(block)?.[1];
+    const body = (block.split(/^(?:Highlights|Text):[ \t]*$/m)[1] || '').replace(/\n{2,}/g, '\n').trim();
+    return title && url && body.length > 80 ? { title: title.slice(0, 140), url, published: /^Published: (\d{4}-\d\d-\d\d)/m.exec(block)?.[1] || '', text: body.slice(0, clip) } : null;
+  }).filter(Boolean);
+}
 async function wiki(params) {
   const res = await fetch('https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ format: 'json', ...params }), {
     headers: { 'User-Agent': 'storyviz/1.0 (writing tool; fact lookup)' }, signal: AbortSignal.timeout(7000),
@@ -196,33 +226,77 @@ async function wiki(params) {
   if (!res.ok) throw new Error('wikipedia ' + res.status);
   return res.json();
 }
-async function research(checks) {
-  const hits = await Promise.all(checks.map(async (c) => {
+async function wikiSources(queries, max = 6) {
+  const hits = await Promise.all(queries.map(async (q) => {
     try {
-      const j = await wiki({ action: 'query', list: 'search', srsearch: String(c.query).slice(0, 120), srlimit: '3' });
+      const j = await wiki({ action: 'query', list: 'search', srsearch: String(q).slice(0, 120), srlimit: '3' });
       return (j.query?.search || []).map((h) => h.title);
-    } catch (e) { console.error('search failed', c.query, e.message); return []; }
+    } catch (e) { console.error('search failed', q, e.message); return []; }
   }));
-  // Take every claim's best hit before anyone's second, so one claim cannot use up all the source slots.
   const titles = [];
   for (let rank = 0; rank < 3; rank++) for (const list of hits) if (list[rank] && !titles.includes(list[rank])) titles.push(list[rank]);
-  const pages = await Promise.all(titles.slice(0, 6).map(async (title) => {
+  const pages = await Promise.all(titles.slice(0, max).map(async (title) => {
     try {
       const j = await wiki({ action: 'query', prop: 'extracts', explaintext: '1', exchars: '2200', redirects: '1', titles: title });
       const page = Object.values(j.query?.pages || {})[0];
       const text = String(page?.extract || '').replace(/\n{2,}/g, '\n').trim();
-      return text.length > 80 ? { title: page.title, url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(page.title.replace(/ /g, '_')), text } : null;
+      return text.length > 80 ? { title: page.title + ' (Wikipedia)', url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(page.title.replace(/ /g, '_')), published: '', text } : null;
     } catch (e) { console.error('extract failed', title, e.message); return null; }
   }));
   return pages.filter(Boolean);
 }
+// Wikipedia's search wants a topic, not a sentence: keep the words that carry the subject.
+const STOP = new Set('a an the of on in at to for and or but with about how much many does do did is are was were be can could should would i we you it its my our me us get find give tell show research look up into facts fact figures numbers actually really some any that this what which who when where why please need want'.split(' '));
+const topicOf = (q) => (String(q).toLowerCase().match(/[a-z0-9']+/g) || []).filter((w) => !STOP.has(w)).slice(0, 6).join(' ') || String(q);
+
+// The coach names the claims worth checking; each one is searched in its own words.
+async function research(checks) {
+  const lists = await Promise.all(checks.map(async (c) => {
+    try { return await exa(`${c.quote} (${c.query})`, 2, 1500); } catch (e) { console.error('exa failed', e.message); return []; }
+  }));
+  // Take every claim's best hit before anyone's second, so one claim cannot use up all the source slots.
+  const out = [];
+  for (let rank = 0; rank < 2; rank++) for (const list of lists) if (list[rank] && !out.some((s) => s.url === list[rank].url)) out.push(list[rank]);
+  return out.length ? out.slice(0, 6) : wikiSources(checks.map((c) => c.query));
+}
+const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+const sourceList = (sources) => sources.map((s, i) => `[${i + 1}] ${s.title} (${[host(s.url), s.published].filter(Boolean).join(', ')})\n${s.text}`).join('\n\n');
 function factRequest(pack, text, checks, sources) {
   return [
     'mode: fact check', `writing type: ${pack.name}`,
     `draft:\n"""\n${String(text).slice(0, 9000)}\n"""`,
     `claims to check:\n${checks.map((c) => JSON.stringify({ quote: c.quote })).join('\n')}`,
-    `sources:\n${sources.map((s, i) => `[${i + 1}] ${s.title}\n${s.text}`).join('\n\n')}`,
+    `sources:\n${sourceList(sources)}`,
   ].join('\n\n');
+}
+function askRequest(pack, text, ask, sources) {
+  return [
+    'mode: research', `writing type: ${pack.name}`,
+    `the writer asks:\n"""\n${ask}\n"""`,
+    `draft:\n"""\n${String(text).slice(0, 5000)}\n"""`,
+    `sources:\n${sourceList(sources)}`,
+  ].join('\n\n');
+}
+
+// The writer sends the coach to look something up. The sources go to the page as soon as the search
+// returns, so there is something to read while the model request waits in the queue.
+async function streamAsk(res, pack, text, ask) {
+  const send = openStream(res);
+  let sources = [];
+  try { sources = await exa(ask, 6); } catch (e) { console.error('exa failed', e.message); }
+  if (!sources.length) sources = await wikiSources([topicOf(ask)], 4);
+  send({ type: 'sources', sources: sources.map(({ title, url, published }) => ({ title, url, published })) });
+  if (!sources.length) { send({ type: 'error', message: 'No sources found. Try other words.' }); res.end(); return; }
+  // A finding must name a real source; it reaches the page with that source's title and link.
+  const cite = (l) => {
+    const o = parseLine(l); if (!o) return null;
+    if (o.k === 'answer') return o.text ? JSON.stringify({ k: 'answer', text: o.text }) : null;
+    const s = sources[Number(o.src) - 1]; if (o.k !== 'finding' || !o.text || !s) return null;
+    delete o.src; return JSON.stringify({ ...o, title: s.title, url: s.url });
+  };
+  const r = res.destroyed ? null : await runAgent(res, send, 'coach', askRequest(pack, text, ask, sources), { maxTokens: 3500, shape: cite });
+  if (r) send(r.done);
+  res.end();
 }
 
 // A separate request from the coach's, so a slow fact check never holds up the tips.
@@ -314,6 +388,13 @@ const server = http.createServer(async (req, res) => {
       if (!pack) { res.writeHead(400); res.end('unknown pack'); return; }
       const checks = (Array.isArray(b.checks) ? b.checks : []).filter((c) => c && c.quote && c.query).slice(0, 3);
       return streamFacts(res, pack, b.text || '', checks);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/ask') {
+      const b = await readBody(req);
+      const pack = loadPacks().find((p) => p.id === b.pack);
+      const ask = String(b.ask || '').trim().slice(0, 400);
+      if (!pack || ask.length < 3) { res.writeHead(400); res.end('unknown pack or empty question'); return; }
+      return streamAsk(res, pack, b.text || '', ask);
     }
     if (req.method === 'GET') {
       if (url.pathname.startsWith('/vendor/three/')) {
