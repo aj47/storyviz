@@ -1,0 +1,4 @@
+.env*
+scratch/
+node_modules/
+cache/

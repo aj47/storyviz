@@ -1,0 +1,272 @@
+{
+  "id": "short-video-script",
+  "name": "Short video script",
+  "blurb": "Spoken script for a 15 to 60 second vertical video on TikTok, Reels or Shorts.",
+  "visual": "storyboard",
+  "placeholder": "Hey guys, welcome back to the channel. In this video I'm going to talk about my new standing desk and share some learnings.\n\nSo I'm Sam and I've been making videos for about three years now. I bought this desk last month. Overall it scored 8 out of 10 on my stability metric.\n\nAnyway, that's basically it. Let me know what you think.",
+  "structure": {
+    "name": "Hook, body, close",
+    "source": "tiktok-codes",
+    "stages": [
+      {"id": "hook", "label": "Hook", "hint": "First six seconds: name the topic with suspense, surprise or emotion."},
+      {"id": "body", "label": "Body", "hint": "Deliver the substance; change scenes to hold attention."},
+      {"id": "resolution", "label": "Resolution", "hint": "Pay off the question the hook opened."},
+      {"id": "close", "label": "Close", "hint": "One clear call to action."}
+    ]
+  },
+  "sources": [
+    {
+      "id": "techfren",
+      "title": "TechFren content principles",
+      "author": "AJ",
+      "year": 2026,
+      "url": ""
+    },
+    {
+      "id": "mrbeast",
+      "title": "How to Succeed in MrBeast Production",
+      "author": "MrBeast (Jimmy Donaldson)",
+      "year": 2024,
+      "url": "https://simonwillison.net/2024/Sep/15/how-to-succeed-in-mrbeast-production/"
+    },
+    {
+      "id": "tiktok-bp",
+      "title": "Creative best practices for performance ads",
+      "author": "TikTok for Business",
+      "year": 2025,
+      "url": "https://ads.tiktok.com/help/article/creative-best-practices"
+    },
+    {
+      "id": "tiktok-codes",
+      "title": "Creative Codes",
+      "author": "TikTok for Business",
+      "year": 2023,
+      "url": "https://ads.tiktok.com/business/library/Creative_Codes_ENG.pdf"
+    },
+    {
+      "id": "youtube",
+      "title": "Resources for YouTube creators: Top questions",
+      "author": "YouTube",
+      "year": 2026,
+      "url": "https://www.youtube.com/creators/resources/"
+    }
+  ],
+  "rules": [
+    {
+      "id": "techfren-topic-first",
+      "source": "techfren",
+      "name": "Name the topic first",
+      "rule": "Name the topic in the first spoken sentence, inside three seconds; viewers must understand the subject before they can be curious.",
+      "look_for": "First sentence has no named subject: a greeting, a vague teaser, or 'this'/'it' with no referent.",
+      "bad": "You won't believe what happened when I tried this.",
+      "good": "I let an AI agent run my inbox for a week."
+    },
+    {
+      "id": "techfren-no-greeting",
+      "source": "techfren",
+      "name": "No greeting, no preamble",
+      "rule": "Cut greetings and 'in this video' announcements; open on the claim itself.",
+      "look_for": "Openers like 'Hey guys', 'Welcome back', 'So today', 'In this video I'm going to'.",
+      "bad": "Hey guys, welcome back, in this video I'm going to show you my desk.",
+      "good": "This desk folds into a suitcase."
+    },
+    {
+      "id": "techfren-claim",
+      "source": "techfren",
+      "name": "Hook is a claim",
+      "rule": "Make the hook a claim the video proves, not a description of the video; a viewer should be able to name the question it raises.",
+      "look_for": "Opening line is a label or description ('I built X', 'My thoughts on Y') that raises no next question.",
+      "bad": "My review of the new standing desk.",
+      "good": "Can a $90 desk hold my 40-pound monitor arm for a month?"
+    },
+    {
+      "id": "techfren-withhold",
+      "source": "techfren",
+      "name": "Don't reveal the result",
+      "rule": "Keep the outcome out of the hook; open the question there and answer it later.",
+      "look_for": "First line states the final score, winner or answer, leaving nothing to find out.",
+      "bad": "The cheap mic lost to the expensive one, 2 to 8.",
+      "good": "Can a $5 mic beat my $400 one? I recorded the same line on both."
+    },
+    {
+      "id": "techfren-lock-in",
+      "source": "techfren",
+      "name": "Lock in after hook",
+      "rule": "Use the two or three sentences after the hook for a non-obvious fact, mechanism or consequence; hold backstory and self-introduction until later.",
+      "look_for": "Sentences two to four are backstory, tool names or 'I'm X and I've been…' with no new fact.",
+      "bad": "I'm Sam and I've been making videos for three years.",
+      "good": "The motor in this desk is the same one used in hospital beds."
+    },
+    {
+      "id": "techfren-payoff",
+      "source": "techfren",
+      "name": "Pay off every loop",
+      "rule": "Answer every question or promise the script opens, at the size it was promised.",
+      "look_for": "A question or promise in the hook that the script never answers, or answers with something smaller.",
+      "bad": "HOOK: This trick doubled my battery life. ENDING: So yeah, try a few settings.",
+      "good": "HOOK: This trick doubled my battery life. ENDING: Turning off 5G took it from 9 hours to 18."
+    },
+    {
+      "id": "techfren-text-hook",
+      "source": "techfren",
+      "name": "Text hook differs from voice",
+      "rule": "Make the on-screen text hook carry the same claim as the first spoken line in different words; never repeat the voice word for word.",
+      "look_for": "On-screen text that matches the first spoken sentence verbatim, or that makes a different claim from the voice.",
+      "bad": "TEXT: I tested a $90 desk. VOICE: I tested a $90 desk.",
+      "good": "TEXT: $90 desk vs 40 lb monitor. VOICE: I bolted my heaviest monitor arm to the cheapest desk I could find."
+    },
+    {
+      "id": "techfren-number",
+      "source": "techfren",
+      "name": "Numbers need meaning",
+      "rule": "Open on a number only when it is the story and its meaning is obvious; explain the task before any score or metric.",
+      "look_for": "An opening stat, score or count that a new viewer cannot interpret without later context.",
+      "bad": "My model scored 0.82 on the held-out set.",
+      "good": "How do you teach a robot to fold a towel? I showed it 40 tries."
+    },
+    {
+      "id": "techfren-action",
+      "source": "techfren",
+      "name": "Say what is happening",
+      "rule": "Describe a visible action or something the viewer could do, in plain first-person speech; avoid abstract report language.",
+      "look_for": "Abstract nouns in the opening lines (tradeoff, insight, learnings, metric, framework) with no visible action or task.",
+      "bad": "This experiment exposed a tradeoff in my workflow metrics.",
+      "good": "I timed myself answering email with and without the AI. Watch the clock."
+    },
+    {
+      "id": "techfren-list",
+      "source": "techfren",
+      "name": "Lists: best item first",
+      "rule": "In a list script, put the strongest item first, keep to three to six items, and re-hook before the later ones.",
+      "look_for": "Seven or more items, a weak or setup item first, or no line re-selling what is still to come.",
+      "bad": "Tip one of ten: make sure your phone is charged.",
+      "good": "Three tips. First, the one that doubled my views: cut your first sentence."
+    },
+    {
+      "id": "techfren-stock",
+      "source": "techfren",
+      "name": "Skip stock hook formulas",
+      "rule": "Avoid worn hook formulas such as 'POV:' and 'nobody tells you', and promise nothing the footage does not show.",
+      "look_for": "'POV:', 'Nobody tells you', 'What no one is talking about', or a claim with no matching shot.",
+      "bad": "POV: nobody tells you this about standing desks.",
+      "good": "My standing desk wobbles at exactly 112 centimeters. Here is why."
+    },
+    {
+      "id": "mrbeast-expectations",
+      "source": "mrbeast",
+      "name": "Deliver the title's promise",
+      "rule": "Open by showing or confirming exactly what the title or cover promised; viewers leave when the video does not match.",
+      "look_for": "Title or text hook names something the first lines do not mention, show or confirm.",
+      "bad": "TITLE: World's smallest gaming PC. OPENING: So I've been getting into woodworking lately.",
+      "good": "TITLE: World's smallest gaming PC. OPENING: This gaming PC fits inside a coffee mug."
+    },
+    {
+      "id": "mrbeast-front-load",
+      "source": "mrbeast",
+      "name": "Front-load the best material",
+      "rule": "Put your most interesting material at the start, where the most viewers are lost.",
+      "look_for": "Opening lines are setup, while the most striking shot or fact first appears in the final third.",
+      "bad": "First let me explain how I ordered the parts and what the box looked like.",
+      "good": "Here is the mug PC running a game at 60 frames. Getting it there cost me three dead motherboards."
+    },
+    {
+      "id": "mrbeast-show",
+      "source": "mrbeast",
+      "name": "Stop telling, start showing",
+      "rule": "After the hook, move from hype to execution: stop saying what viewers will see and show it.",
+      "look_for": "Lines after the hook still promising: 'you'll see', 'I'm going to show you', 'stay tuned', 'wait for it'.",
+      "bad": "In a second I'm going to show you something crazy, so stay tuned.",
+      "good": "Here is the board. Watch what happens when I plug it in."
+    },
+    {
+      "id": "mrbeast-progression",
+      "source": "mrbeast",
+      "name": "Compress early progress",
+      "rule": "Cover a lot of ground early, several steps, days or attempts, so viewers are invested in how far it goes.",
+      "look_for": "First third stays on step one or setup; no visible progress before the midpoint.",
+      "bad": "On day one I unboxed the kit, and here is every item in the box.",
+      "good": "Day one, it would not boot. Day two, smoke. By day three it ran for nine seconds."
+    },
+    {
+      "id": "mrbeast-reengage",
+      "source": "mrbeast",
+      "name": "Plan a mid-video jolt",
+      "rule": "Place a highly interesting beat that fits the story partway through, where viewers start to drift.",
+      "look_for": "Middle section is uniform explanation with no surprise, escalation, reveal or new visual.",
+      "bad": "Then I installed the drivers, then the updates, then the settings.",
+      "good": "Halfway through the install, the mug started to melt."
+    },
+    {
+      "id": "mrbeast-explain-late",
+      "source": "mrbeast",
+      "name": "Keep explanations late",
+      "rule": "Keep the first half simple and fast; move long explanations to the back half or cut them.",
+      "look_for": "A long technical or background explanation before the midpoint of the script.",
+      "bad": "Before we start, here is how thermal throttling works in detail.",
+      "good": "It kept overheating, so I drilled holes. The physics comes later."
+    },
+    {
+      "id": "mrbeast-no-end-signal",
+      "source": "mrbeast",
+      "name": "Don't signal the end",
+      "rule": "Never signal that the video is ending unless you are building hype for the final payoff.",
+      "look_for": "'So that's it', 'Anyway, that's all', 'To wrap up', 'Thanks for watching' before the last payoff.",
+      "bad": "Anyway, that's basically it for this one.",
+      "good": "One test left: the drop from my desk."
+    },
+    {
+      "id": "tiktok-bp-text-overlay",
+      "source": "tiktok-bp",
+      "name": "Add readable text overlays",
+      "rule": "Use captions or on-screen text to give context, paced at roughly five to ten words per second of screen time.",
+      "look_for": "No on-screen text cues at all, or an overlay with more words than its screen time allows.",
+      "bad": "TEXT (1 second): This is the cheapest standing desk I could find anywhere online and I tested it for a full month.",
+      "good": "TEXT (1 second): $90 desk, 30-day test."
+    },
+    {
+      "id": "tiktok-bp-cta",
+      "source": "tiktok-bp",
+      "name": "End with a clear ask",
+      "rule": "Close by telling viewers plainly what to think, feel or do next.",
+      "look_for": "Script ends on the last fact with no instruction, or on a vague 'let me know what you think'.",
+      "bad": "So yeah, let me know what you think.",
+      "good": "Follow for the 90-day update on this desk."
+    },
+    {
+      "id": "tiktok-codes-hook-emotion",
+      "source": "tiktok-codes",
+      "name": "Hook with suspense or surprise",
+      "rule": "Build the first six seconds on suspense, surprise or a strong emotion.",
+      "look_for": "First fifteen or so spoken words are neutral information with no tension, surprise or feeling.",
+      "bad": "Today I am reviewing a standing desk that I bought online.",
+      "good": "I put all my weight on a $90 desk. Listen to the sound it made."
+    },
+    {
+      "id": "tiktok-codes-scene-change",
+      "source": "tiktok-codes",
+      "name": "Change the picture often",
+      "rule": "After the hook, plan frequent scene changes, movement and text pop-ups to hold attention.",
+      "look_for": "Several sentences in a row with no cut, b-roll, movement or on-screen text cue noted.",
+      "bad": "[One static talking-head shot for the whole script.]",
+      "good": "[Cut to desk wobbling] [Text: 112 cm] [Cut to close-up of the loose bolt]"
+    },
+    {
+      "id": "youtube-first-2s",
+      "source": "youtube",
+      "name": "Stop the scroll fast",
+      "rule": "Design the first one to two seconds to grab someone scrolling the feed.",
+      "look_for": "First five or six words are filler or wind-up: 'So I wanted to talk about', 'Okay so basically'.",
+      "bad": "Okay so basically I wanted to talk about something today.",
+      "good": "This desk nearly broke my monitor."
+    },
+    {
+      "id": "youtube-accurate",
+      "source": "youtube",
+      "name": "Title must match content",
+      "rule": "Make the title, description and cover reflect accurately what is in the video.",
+      "look_for": "Title or cover text exaggerates, or names something that never appears in the script.",
+      "bad": "TITLE: I built the world's fastest PC. SCRIPT: a mid-range build with no benchmark.",
+      "good": "TITLE: I built a gaming PC inside a coffee mug. SCRIPT: shows the mug build running a game."
+    }
+  ]
+}

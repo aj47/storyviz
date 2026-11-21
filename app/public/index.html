@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storyviz</title>
+<link rel="stylesheet" href="/style.css">
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js"}}</script>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span>Storyviz</div>
+  <nav id="tabs"></nav>
+  <div class="engine">Kimi K3.1 Pro on Cerebras, run by OpenClaw</div>
+</header>
+
+<main>
+  <section class="editor">
+    <div class="blurb" id="blurb"></div>
+    <div class="pad">
+      <div class="backdrop" id="backdrop" aria-hidden="true"></div>
+      <textarea id="text" spellcheck="false" placeholder="Start writing. Leave a blank line to start a new scene."></textarea>
+    </div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="stage-wrap">
+    <div id="stage"></div>
+    <div class="phone" id="phone" hidden>
+      <div class="phone-top"><span id="beat"></span><span id="sec"></span></div>
+      <div class="phone-caption" id="caption"></div>
+    </div>
+    <div class="overlay top-left">
+      <div class="title" id="title"></div>
+      <div class="chips">
+        <button class="chip" id="styleChip" title="Click for the next style"></button>
+        <button class="chip ghost" id="cycleBtn" title="Pause or resume style cycling">Pause styles</button>
+        <button class="chip ghost" id="strictBtn" title="Strict: only draw what the text describes"></button>
+      </div>
+    </div>
+    <div class="overlay top-right hud" id="hud">
+      <div class="big" id="hudBig">–</div>
+      <div class="small" id="hudSmall">Write something to draw</div>
+    </div>
+    <div class="overlay bottom">
+      <div class="pages" id="pages"></div>
+      <div class="status" id="status"></div>
+    </div>
+  </section>
+
+  <aside class="coach">
+    <div class="coach-head">
+      <h2>Coach</h2>
+      <span class="coach-status" id="coachStatus"></span>
+    </div>
+    <div class="scores" id="scores"></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="block" id="stagesBlock" hidden><h3 id="structureName"></h3><div class="stages" id="stages"></div></div>
+    <div class="block" id="tipsBlock" hidden><h3>Tips</h3><div id="tips"></div></div>
+    <div class="block" id="goodBlock" hidden><h3>Working well</h3><div id="good"></div></div>
+    <div class="block" id="asksBlock" hidden><h3>Questions to answer</h3><div id="asks"></div></div>
+    <div class="block" id="nextBlock" hidden><h3>Possible next lines</h3><div id="next"></div></div>
+    <details class="block rules"><summary id="rulesSummary">Rules</summary><div id="rules"></div></details>
+  </aside>
+</main>
+<script type="module" src="/main.js"></script>
+</body>
+</html>

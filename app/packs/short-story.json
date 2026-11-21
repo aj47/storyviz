@@ -1,0 +1,282 @@
+{
+  "id": "short-story",
+  "name": "Short story",
+  "blurb": "Literary short fiction: a small cast, one conflict, a few thousand words at most.",
+  "visual": "diorama",
+  "placeholder": "It was a dark and stormy night. Rain fell heavily on the harbor town and the wind howled through the empty streets.\n\nSuddenly a tall man with brown hair, blue eyes, a long grey coat and muddy black boots came into the bar. He was very angry.\n\n\"Where is it!\" he shouted furiously. \"I don't know!\" Maria exclaimed nervously from behind the counter, and she was very frightened.",
+  "structure": {
+    "name": "Freytag's pyramid",
+    "source": "freytag",
+    "stages": [
+      {"id": "introduction", "label": "Introduction", "hint": "Who, where, and what the situation is."},
+      {"id": "rise", "label": "Rising action", "hint": "Complications build and push the hero toward a crisis."},
+      {"id": "climax", "label": "Climax", "hint": "The turning point where the hero's fortunes change."},
+      {"id": "fall", "label": "Return or fall", "hint": "The consequences of the climax play out."},
+      {"id": "catastrophe", "label": "Catastrophe", "hint": "The final outcome that closes the conflict."}
+    ]
+  },
+  "sources": [
+    {
+      "id": "vonnegut8",
+      "title": "Creative Writing 101: eight rules for writing a short story (introduction to Bagombo Snuff Box)",
+      "author": "Kurt Vonnegut",
+      "year": 1999,
+      "url": "https://www.openculture.com/2015/04/kurt-vonneguts-8-tips-on-how-to-write-a-good-short-story.html"
+    },
+    {
+      "id": "orwell6",
+      "title": "Politics and the English Language",
+      "author": "George Orwell",
+      "year": 1946,
+      "url": "https://www.orwellfoundation.com/the-orwell-foundation/orwell/essays-and-other-works/politics-and-the-english-language/"
+    },
+    {
+      "id": "leonard10",
+      "title": "Writers on Writing: Easy on the Adverbs, Exclamation Points and Especially Hooptedoodle",
+      "author": "Elmore Leonard",
+      "year": 2001,
+      "url": "https://www.nytimes.com/2001/07/16/arts/writers-writing-easy-adverbs-exclamation-points-especially-hooptedoodle.html"
+    },
+    {
+      "id": "chekhov",
+      "title": "Letter to Alexander Chekhov, 10 May 1886 (quoted in Ernest J. Simmons, Introduction to Russian Realism, ch. V)",
+      "author": "Anton Chekhov",
+      "year": 1886,
+      "url": "https://publish.iupress.indiana.edu/read/introduction-to-russian-realism-pushkin-gogol-dostoevsky-tolstoy-chekhov-sholokhov/section/15cdccb7-8a02-49a3-8280-4d053e798d08"
+    },
+    {
+      "id": "freytag",
+      "title": "Freytag's Technique of the Drama (Die Technik des Dramas), trans. Elias J. MacEwan",
+      "author": "Gustav Freytag",
+      "year": 1863,
+      "url": "https://archive.org/details/freytagstechniqu00freyuoft"
+    }
+  ],
+  "rules": [
+    {
+      "id": "vonnegut8-2",
+      "source": "vonnegut8",
+      "name": "Someone to root for",
+      "rule": "Give the reader at least one character they can root for.",
+      "look_for": "By the end of the first scene no character has shown a want, a weakness or a decent act.",
+      "bad": "Marcus had never cared about anyone, and nothing bothered him.",
+      "good": "Marcus had never cared about anyone, which is why he could not explain the stray dog asleep in his truck."
+    },
+    {
+      "id": "vonnegut8-3",
+      "source": "vonnegut8",
+      "name": "Everyone wants something",
+      "rule": "Give every character a want, even a trivial one.",
+      "look_for": "A character appears in a scene with no stated or implied want.",
+      "bad": "The waitress came to the table.",
+      "good": "The waitress came to the table with one eye on the clock; four more minutes and she could go."
+    },
+    {
+      "id": "vonnegut8-4",
+      "source": "vonnegut8",
+      "name": "Every sentence works",
+      "rule": "Make each sentence either reveal a character or move the action forward; cut any that do neither.",
+      "look_for": "Sentences of history, scenery or background that show nothing about a character and change nothing.",
+      "bad": "The town had been founded in 1846 by Dutch settlers.",
+      "good": "Lena had lived in the town thirty years and still locked her door against it."
+    },
+    {
+      "id": "vonnegut8-5",
+      "source": "vonnegut8",
+      "name": "Start near the end",
+      "rule": "Open as close to the ending as possible; skip the lead-up.",
+      "look_for": "Opening paragraphs of waking up, travelling or backstory before the central conflict appears.",
+      "bad": "Anna woke at seven, showered, and drove forty minutes to her mother's house.",
+      "good": "Anna was holding the will when her brother walked in."
+    },
+    {
+      "id": "vonnegut8-6",
+      "source": "vonnegut8",
+      "name": "Be hard on characters",
+      "rule": "Make terrible things happen to your main characters, however likeable, so readers see what they are made of.",
+      "look_for": "Obstacles dissolve at once, or the main character never loses, risks or suffers anything.",
+      "bad": "She worried the bank would refuse, but the loan was approved that afternoon.",
+      "good": "The bank refused, and by Friday the truck was gone too."
+    },
+    {
+      "id": "vonnegut8-8",
+      "source": "vonnegut8",
+      "name": "Don't hide the basics",
+      "rule": "Tell readers who, where and what is going on as early as possible; do not build suspense by withholding basic facts.",
+      "look_for": "An unnamed 'he', 'she' or 'it' kept vague for paragraphs; setting or situation unclear after the opening.",
+      "bad": "He stared at the thing in his hand and thought about what she had done.",
+      "good": "Tomas stared at the eviction notice and thought about the rent his sister had gambled away."
+    },
+    {
+      "id": "orwell6-1",
+      "source": "orwell6",
+      "name": "No stock metaphors",
+      "rule": "Replace any metaphor, simile or figure of speech that is already familiar from print with a fresh image or a plain statement.",
+      "look_for": "Clichés: 'heart pounded like a drum', 'cold as ice', 'a chill ran down her spine', 'time stood still'.",
+      "bad": "Her heart pounded like a drum.",
+      "good": "She could feel her pulse in her teeth."
+    },
+    {
+      "id": "orwell6-2",
+      "source": "orwell6",
+      "name": "Prefer the short word",
+      "rule": "Choose the short word whenever it does the job of a long one.",
+      "look_for": "Long Latinate words with short equivalents: utilize, commence, approximately, endeavor, purchase, illuminate.",
+      "bad": "He commenced to utilize the implement.",
+      "good": "He started to use the spade."
+    },
+    {
+      "id": "orwell6-3",
+      "source": "orwell6",
+      "name": "Cut spare words",
+      "rule": "Delete every word the sentence can lose without changing its meaning.",
+      "look_for": "Filler: 'in order to', 'the fact that', 'began to', 'very', 'really'; redundancies like 'nodded his head'.",
+      "bad": "She nodded her head in order to show that she really agreed.",
+      "good": "She nodded."
+    },
+    {
+      "id": "orwell6-4",
+      "source": "orwell6",
+      "name": "Active over passive",
+      "rule": "Write in the active voice wherever the doer is known.",
+      "look_for": "'was' or 'were' plus a past participle, often with 'by': 'the door was opened by Mara'.",
+      "bad": "The letter was read by Mara in silence.",
+      "good": "Mara read the letter in silence."
+    },
+    {
+      "id": "orwell6-5",
+      "source": "orwell6",
+      "name": "Plain words over jargon",
+      "rule": "Swap foreign phrases, scientific terms and jargon for everyday English equivalents.",
+      "look_for": "Foreign or technical terms that have plain equivalents: 'vis-à-vis', 'ameliorate', 'precipitation', 'per se'.",
+      "bad": "The precipitation exacerbated his malaise.",
+      "good": "The rain made his mood worse."
+    },
+    {
+      "id": "leonard10-1",
+      "source": "leonard10",
+      "name": "Don't open with weather",
+      "rule": "Do not begin with weather unless it shows a character reacting to it.",
+      "look_for": "First sentences describe sky, rain, wind or temperature before any person appears.",
+      "bad": "It was a dark and stormy night.",
+      "good": "Dolores drove with the window down, daring the storm to come in."
+    },
+    {
+      "id": "leonard10-2",
+      "source": "leonard10",
+      "name": "Skip the prologue",
+      "rule": "Leave out prologues; drop backstory into the story where it is needed.",
+      "look_for": "A section labelled 'Prologue', or an opening block of history before the first scene.",
+      "bad": "Prologue: Twenty years earlier, the mill had burned.",
+      "good": "Ray still crossed the street to avoid the lot where the mill had burned."
+    },
+    {
+      "id": "leonard10-3",
+      "source": "leonard10",
+      "name": "Only said",
+      "rule": "Carry dialogue with 'said' and no other verb.",
+      "look_for": "Speech verbs such as grumbled, gasped, cautioned, exclaimed, shouted, hissed, retorted.",
+      "bad": "\"You're late,\" she hissed.",
+      "good": "\"You're late,\" she said."
+    },
+    {
+      "id": "leonard10-4",
+      "source": "leonard10",
+      "name": "No adverb on said",
+      "rule": "Never attach an adverb to 'said' or any other dialogue verb.",
+      "look_for": "A dialogue verb followed by an -ly adverb: 'said angrily', 'said softly', 'shouted furiously'.",
+      "bad": "\"Get out,\" he said angrily.",
+      "good": "\"Get out,\" he said, and held the door open."
+    },
+    {
+      "id": "leonard10-5",
+      "source": "leonard10",
+      "name": "Ration exclamation marks",
+      "rule": "Allow two or three exclamation marks per 100,000 words; in a short story that means effectively none.",
+      "look_for": "Any exclamation mark in narration or dialogue; more than one in the draft.",
+      "bad": "\"I can't believe it!\" she said. \"You came back!\"",
+      "good": "\"I can't believe it,\" she said. \"You came back.\""
+    },
+    {
+      "id": "leonard10-6",
+      "source": "leonard10",
+      "name": "Ban suddenly",
+      "rule": "Never write 'suddenly' or 'all hell broke loose'.",
+      "look_for": "The word 'suddenly', 'all of a sudden', or the phrase 'all hell broke loose'.",
+      "bad": "Suddenly the window shattered.",
+      "good": "The window shattered."
+    },
+    {
+      "id": "leonard10-7",
+      "source": "leonard10",
+      "name": "Go easy on dialect",
+      "rule": "Use regional dialect and phonetic spelling sparingly.",
+      "look_for": "Dialogue loaded with dropped letters and phonetic spellings: 'goin'', 'wuz', 'yer', 'd'ya'.",
+      "bad": "\"Ah'm jus' goin' ter th' sto',\" he said.",
+      "good": "\"I'm just going to the store,\" he said, dragging the last word out."
+    },
+    {
+      "id": "leonard10-8",
+      "source": "leonard10",
+      "name": "No character inventories",
+      "rule": "Avoid detailed physical descriptions of characters; let voice and action suggest them.",
+      "look_for": "A run listing hair, eyes, height, build and clothing when a character enters.",
+      "bad": "He was tall, with brown hair, blue eyes, a grey coat and black boots.",
+      "good": "He ducked under the doorframe out of habit."
+    },
+    {
+      "id": "leonard10-9",
+      "source": "leonard10",
+      "name": "Don't over-describe places",
+      "rule": "Do not describe places and things in great detail; keep the action moving.",
+      "look_for": "Three or more consecutive sentences of setting or object description with no action or dialogue.",
+      "bad": "The kitchen had oak cabinets, a tiled floor, a steel sink, two windows and a round table.",
+      "good": "She cleared a space on the kitchen table with her forearm."
+    },
+    {
+      "id": "leonard10-10",
+      "source": "leonard10",
+      "name": "Cut what readers skip",
+      "rule": "Leave out the parts readers skip: thick blocks of prose in which nobody talks or acts.",
+      "look_for": "Long unbroken paragraphs of narration or reflection with no dialogue and no event.",
+      "bad": "For the next hour he thought about his childhood, his father, the farm and all the summers gone.",
+      "good": "\"You ever think about the farm?\" he said."
+    },
+    {
+      "id": "chekhov-details",
+      "source": "chekhov",
+      "name": "Small concrete details",
+      "rule": "Describe nature and setting through a few small particulars grouped so the reader can picture the scene; drop general statements.",
+      "look_for": "General statements of scene or atmosphere: 'the moon was shining', 'it was a beautiful night', 'the room was messy'.",
+      "bad": "The moon was shining brightly over the yard.",
+      "good": "Frost on the car roof glowed blue, and the washing line threw a hard shadow across the yard."
+    },
+    {
+      "id": "chekhov-state-of-mind",
+      "source": "chekhov",
+      "name": "Show feelings through action",
+      "rule": "Avoid stating a character's state of mind; make it clear from what the character does.",
+      "look_for": "Emotion named outright: 'he was angry', 'she felt nervous', 'he was filled with sadness'.",
+      "bad": "He was very angry.",
+      "good": "He folded the letter into smaller and smaller squares until it would not fold again."
+    },
+    {
+      "id": "chekhov-two-people",
+      "source": "chekhov",
+      "name": "Keep the cast small",
+      "rule": "Do not crowd the story with characters; put its center of gravity in two people.",
+      "look_for": "More than four or five named characters in a short draft, or no clear central pair.",
+      "bad": "Ann, Bob, Carla, Dev, Elena and Father Mike all met at the station.",
+      "good": "Ann met Dev at the station; everyone else was just a crowd."
+    },
+    {
+      "id": "freytag-climax",
+      "source": "freytag",
+      "name": "Build to a turning point",
+      "rule": "Arrange events so tension rises to one clear climax where the hero's fortunes turn, then show the fall that follows.",
+      "look_for": "No identifiable turning point: tension stays flat, or the story stops mid-rise with the conflict unsettled.",
+      "bad": "They argued on Monday, argued again on Tuesday, and the week went on.",
+      "good": "On Wednesday she said the one thing she could not take back, and by Friday he had packed."
+    }
+  ]
+}

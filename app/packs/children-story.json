@@ -1,0 +1,276 @@
+{
+  "id": "children-story",
+  "name": "Children's story",
+  "blurb": "A short read-aloud picture-book story for young children, told in under 500 words.",
+  "visual": "diorama",
+  "placeholder": "Benny the Bunny lived in a burrow by the river. He was very happy. Every morning he ate his breakfast and brushed his fluffy white fur.\n\nOne day Benny lost his red kite. \"Oh no!\" he gasped. He was very sad. Just then, by lucky chance, the wind blew the kite right back into his paws.\n\nAnd so Benny learned that you should always look after your things.",
+  "structure": {
+    "name": "Story spine",
+    "source": "storyspine",
+    "stages": [
+      {"id": "once", "label": "Once upon a time", "hint": "Introduce the hero and the world they live in."},
+      {"id": "every-day", "label": "Every day", "hint": "Show the hero's normal routine before anything changes."},
+      {"id": "one-day", "label": "But one day", "hint": "Something happens that breaks the routine."},
+      {"id": "because-1", "label": "Because of that", "hint": "The first consequence of that event."},
+      {"id": "because-2", "label": "Because of that", "hint": "A second consequence, caused by the first."},
+      {"id": "because-3", "label": "Because of that", "hint": "A third consequence that makes the trouble worst."},
+      {"id": "until-finally", "label": "Until finally", "hint": "The climax: the hero acts and the problem is settled."},
+      {"id": "ever-since", "label": "And ever since then", "hint": "The new normal: what has changed for good."}
+    ]
+  },
+  "sources": [
+    {
+      "id": "pixar22",
+      "title": "Pixar's 22 Rules of Storytelling",
+      "author": "Emma Coats",
+      "year": 2011,
+      "url": "https://www.aerogrammestudio.com/2013/03/07/pixars-22-rules-of-storytelling/"
+    },
+    {
+      "id": "storyspine",
+      "title": "Back to the Story Spine",
+      "author": "Kenn Adams",
+      "year": 2013,
+      "url": "https://www.aerogrammestudio.com/2013/06/05/back-to-the-story-spine/"
+    },
+    {
+      "id": "memfox-dos",
+      "title": "Writing Do's and Don'ts",
+      "author": "Mem Fox",
+      "year": 2024,
+      "url": "https://memfox.au/advice/twenty-writing-dos-and-donts"
+    },
+    {
+      "id": "memfox-pb",
+      "title": "Writing Picture Books",
+      "author": "Mem Fox",
+      "year": 2024,
+      "url": "https://memfox.au/advice/writing-picture-books"
+    },
+    {
+      "id": "vonnegut8",
+      "title": "Creative Writing 101: eight rules for writing a short story (introduction to Bagombo Snuff Box)",
+      "author": "Kurt Vonnegut",
+      "year": 1999,
+      "url": "https://www.openculture.com/2015/04/kurt-vonneguts-8-tips-on-how-to-write-a-good-short-story.html"
+    }
+  ],
+  "rules": [
+    {
+      "id": "pixar22-1",
+      "source": "pixar22",
+      "name": "Trying beats winning",
+      "rule": "Show the hero trying and failing before they succeed; audiences like a character for effort more than for results.",
+      "look_for": "Hero gets what they want on the first attempt, with no failed try or struggle shown.",
+      "bad": "Pip wanted the apple, so she reached up and picked it.",
+      "good": "Pip jumped, climbed and slid down twice before her paw hooked the apple."
+    },
+    {
+      "id": "pixar22-4",
+      "source": "pixar22",
+      "name": "Fill every spine beat",
+      "rule": "Give the story all its beats: a normal world, the day it changes, a chain of consequences, a climax and a changed world afterwards.",
+      "look_for": "A missing beat: no routine before the change, no event that starts the trouble, or no climax.",
+      "bad": "Pip found an apple. Pip found a pear. Pip went home.",
+      "good": "Every day Pip ate grass. One day an apple fell on her head, and she had to know where it came from."
+    },
+    {
+      "id": "pixar22-6",
+      "source": "pixar22",
+      "name": "Test the hero's comfort",
+      "rule": "Work out what the hero is good at or comfortable with, then make them face the opposite.",
+      "look_for": "The problem suits the hero's strengths, so nothing forces them to do something hard or new.",
+      "bad": "Otter, the best swimmer on the river, had to swim across the river.",
+      "good": "Otter, the best swimmer on the river, had to cross the dry, dusty hill."
+    },
+    {
+      "id": "pixar22-13",
+      "source": "pixar22",
+      "name": "Give characters opinions",
+      "rule": "Give the hero likes, dislikes and choices of their own; a character who only goes along with others loses the audience.",
+      "look_for": "Hero only follows, agrees or has things happen to them; never chooses, refuses or states a preference.",
+      "bad": "Mouse went wherever the others went.",
+      "good": "\"Not the pond,\" said Mouse. \"I am going up the hill.\""
+    },
+    {
+      "id": "pixar22-16",
+      "source": "pixar22",
+      "name": "Show the stakes",
+      "rule": "Make clear what the hero loses if they fail, and make failure look likely.",
+      "look_for": "No sentence says what will happen if the hero does not succeed.",
+      "bad": "Pip looked for her kite.",
+      "good": "If Pip did not find her kite before dark, the wind would carry it out to sea."
+    },
+    {
+      "id": "pixar22-19",
+      "source": "pixar22",
+      "name": "No lucky rescue",
+      "rule": "Let coincidence get the hero into trouble, never out of it; the hero's own action must solve the problem.",
+      "look_for": "Problem solved by luck, magic, or a grown-up stepping in instead of something the hero does.",
+      "bad": "Just then the wind blew the kite back into her paws.",
+      "good": "Pip tied her scarf to a stick and hooked the kite down from the branch."
+    },
+    {
+      "id": "storyspine-because",
+      "source": "storyspine",
+      "name": "Link events with because",
+      "rule": "Make each middle event happen because of the one before it, not just after it.",
+      "look_for": "Events joined only by 'and then' or 'next', where removing one would not change the others.",
+      "bad": "Pip saw a frog. Then she saw a duck. Then it rained.",
+      "good": "Pip chased the frog, so she fell in the pond, so the duck had to pull her out."
+    },
+    {
+      "id": "storyspine-ever-since",
+      "source": "storyspine",
+      "name": "End on the change",
+      "rule": "After the climax, show how the hero's everyday life is now different from the opening.",
+      "look_for": "Story stops at the climax, or returns to exactly the opening state with nothing changed.",
+      "bad": "Pip got the kite back. The end.",
+      "good": "And ever since then, Pip has flown her kite with a double knot and a friend holding on."
+    },
+    {
+      "id": "memfox-dos-do8",
+      "source": "memfox-dos",
+      "name": "Show, don't tell",
+      "rule": "Reveal feelings and character through what characters say and do instead of naming them.",
+      "look_for": "Sentences that state an emotion or trait outright: 'was sad', 'felt happy', 'was very brave'.",
+      "bad": "Bear was very sad.",
+      "good": "Bear sat down in the snow and would not look up."
+    },
+    {
+      "id": "memfox-dos-do9",
+      "source": "memfox-dos",
+      "name": "Stay under 500 words",
+      "rule": "Keep the full text under about 500 words; fewer is better.",
+      "look_for": "Total word count above 500, or a draft already near 500 before the problem is solved.",
+      "bad": "Once, in a faraway green valley beside a long winding river, under a big blue sky, there lived a small brown rabbit named Thimble.",
+      "good": "Thimble lived by the river."
+    },
+    {
+      "id": "memfox-dos-dont1",
+      "source": "memfox-dos",
+      "name": "Don't talk down",
+      "rule": "Write for clever, lively children; do not use baby talk or explain what they can work out themselves.",
+      "look_for": "Baby talk, cutesy doubled words, or a narrator explaining an obvious word or feeling.",
+      "bad": "The teeny-weeny bunny-wunny was scared, which means frightened.",
+      "good": "The rabbit's ears went flat."
+    },
+    {
+      "id": "memfox-dos-dont2",
+      "source": "memfox-dos",
+      "name": "No lifeless-object heroes",
+      "rule": "Make the main character a person, animal, toy or vehicle, not an inanimate object such as a coin or an ice cube.",
+      "look_for": "Hero is an everyday object (shoe, coin, kite, ice cube, sausage) given a name and feelings.",
+      "bad": "Colin the coin rolled out of the purse and felt lonely.",
+      "good": "A small dog nosed a coin out of the purse and chased it down the street."
+    },
+    {
+      "id": "memfox-dos-dont3",
+      "source": "memfox-dos",
+      "name": "No alliterative names",
+      "rule": "Avoid names that alliterate with the character's species or trait; pick a name that reveals something about the character.",
+      "look_for": "A name or title where name and noun share a first sound: 'Benny the Bunny', 'Tilly the Turtle'.",
+      "bad": "Benny the Bunny hopped out.",
+      "good": "Thimble the rabbit hopped out."
+    },
+    {
+      "id": "memfox-dos-dont4",
+      "source": "memfox-dos",
+      "name": "No rhyming plots",
+      "rule": "Tell a story that has a plot in prose, not in rhyming verse.",
+      "look_for": "Line endings that rhyme in pairs while the text tells a story with a problem and an ending.",
+      "bad": "Pip the pup went up the hill, to find her ball and her friend Bill.",
+      "good": "Pip climbed the hill to find her ball."
+    },
+    {
+      "id": "memfox-dos-dont8",
+      "source": "memfox-dos",
+      "name": "Just write said",
+      "rule": "Tag speech with 'said'; let the situation show the gasping or spluttering.",
+      "look_for": "Speech tags such as gasped, spluttered, exclaimed, giggled, cried or squealed.",
+      "bad": "\"It's gone!\" gasped Mole.",
+      "good": "\"It's gone,\" said Mole, and his spade dropped."
+    },
+    {
+      "id": "memfox-dos-dont10",
+      "source": "memfox-dos",
+      "name": "No dream endings",
+      "rule": "Never end by revealing that the events were only a dream.",
+      "look_for": "Final lines where the hero wakes up and the story turns out not to have happened.",
+      "bad": "Then Pip woke up. It had all been a dream.",
+      "good": "Pip fell asleep with the muddy kite string still wound round her paw."
+    },
+    {
+      "id": "memfox-dos-dont11",
+      "source": "memfox-dos",
+      "name": "Don't preach",
+      "rule": "Do not write to teach; cut any stated moral and let the story's events carry the meaning.",
+      "look_for": "A closing sentence that states the lesson, or a narrator or adult explaining what was learned.",
+      "bad": "And so Finn learned that sharing is always right.",
+      "good": "Finn broke the biscuit in two and held out the bigger half."
+    },
+    {
+      "id": "memfox-pb-trouble",
+      "source": "memfox-pb",
+      "name": "No trouble, no story",
+      "rule": "Give the hero a problem; a story with a beginning, middle and end needs trouble.",
+      "look_for": "Nothing goes wrong: the character does pleasant things in order and nothing is at risk.",
+      "bad": "Pip went to the park, played on the swing and went home.",
+      "good": "Pip went to the park, and the swing was gone."
+    },
+    {
+      "id": "memfox-pb-repetition",
+      "source": "memfox-pb",
+      "name": "Add a refrain",
+      "rule": "Repeat a phrase or sentence pattern so children can predict it and join in.",
+      "look_for": "No phrase, question or sentence pattern recurs anywhere in the draft.",
+      "bad": "Pip asked the cow. Later she spoke with the hen. The pig also heard her question.",
+      "good": "\"Have you seen my kite?\" Pip asked the cow. \"Have you seen my kite?\" Pip asked the hen."
+    },
+    {
+      "id": "memfox-pb-first-last",
+      "source": "memfox-pb",
+      "name": "Polish first and last lines",
+      "rule": "Make the first sentence grab the listener and the last one leave them content.",
+      "look_for": "First sentence is plain scene-setting with no hook; last sentence trails off or just says 'The end'.",
+      "bad": "This is a story about a rabbit.",
+      "good": "On Tuesday, Thimble's burrow floated away."
+    },
+    {
+      "id": "memfox-pb-art",
+      "source": "memfox-pb",
+      "name": "Leave detail to pictures",
+      "rule": "Do not describe or explain what the illustrations will make obvious; keep description minimal.",
+      "look_for": "Sentences listing colors, clothes, weather or scenery that a picture would show.",
+      "bad": "Pip wore a red coat with four yellow buttons and shiny blue boots.",
+      "good": "Pip pulled on her coat."
+    },
+    {
+      "id": "vonnegut8-3",
+      "source": "vonnegut8",
+      "name": "Everyone wants something",
+      "rule": "Give every character a want, even a tiny one.",
+      "look_for": "A named character who appears without wanting, seeking or asking for anything.",
+      "bad": "Owl lived in the oak tree.",
+      "good": "Owl lived in the oak tree and wanted one quiet night."
+    },
+    {
+      "id": "vonnegut8-4",
+      "source": "vonnegut8",
+      "name": "Every sentence works",
+      "rule": "Make each sentence either reveal a character or move the action forward; cut any that do neither.",
+      "look_for": "Sentences of scenery, weather or background that show nothing about a character and change nothing.",
+      "bad": "The sky was blue and the grass was green.",
+      "good": "Pip ran so fast the grass whipped her knees."
+    },
+    {
+      "id": "vonnegut8-5",
+      "source": "vonnegut8",
+      "name": "Start near the end",
+      "rule": "Open as close to the ending as possible; skip the lead-up.",
+      "look_for": "Opening lines about waking, breakfast or background before the story's problem appears.",
+      "bad": "Pip woke up, brushed her teeth, ate her toast and put on her boots.",
+      "good": "Pip's kite was already stuck in the tallest tree in town."
+    }
+  ]
+}
