@@ -46,7 +46,7 @@
           <div class="menu up" id="styleMenu" hidden></div>
         </div>
         <label class="sw" title="Switch to a new visual style every 7 seconds"><input type="checkbox" id="restyleSw"><i></i>Restyle</label>
-        <label class="sw" title="Only draw what the text describes. Anything vague shows as a ghost."><input type="checkbox" id="strictSw"><i></i>Strict</label>
+        <label class="sw" title="Off: only what you wrote is drawn, and anything vague shows as a pale ghost. On: the model invents the missing details."><input type="checkbox" id="fillSw"><i></i>Fill gaps</label>
         <button id="redrawBtn" title="Draw this scene again">Redraw</button>
       </div>
       <div class="pages" id="pages"></div>
@@ -58,7 +58,7 @@
       <h2>Coach</h2>
       <span class="coach-status" id="coachStatus"></span>
       <button class="mini" id="reviewBtn" hidden>Review</button>
-      <label class="sw" title="Review the draft every time you pause typing"><input type="checkbox" id="liveSw"><i></i>Live</label>
+      <label class="sw" title="Re-read the draft and suggest improvements every time you pause typing"><input type="checkbox" id="liveSw"><i></i>Keep improving</label>
     </div>
     <div class="verdict" id="verdict" hidden></div>
     <div class="scores" id="scores" hidden></div>

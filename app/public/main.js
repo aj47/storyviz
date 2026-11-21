@@ -54,7 +54,7 @@ async function boot() {
   if (q.get('hold')) { const im = new Image(); im.hidden = true; im.src = '/api/hold?ms=' + Number(q.get('hold')); document.body.appendChild(im); }
   if (q.get('style') || q.has('nocycle')) S.restyle = false;
   setStyle(Math.max(0, STYLE_ORDER.indexOf(q.get('style') || store.get('style'))));
-  $('#restyleSw').checked = S.restyle; $('#strictSw').checked = S.strict; $('#liveSw').checked = S.live;
+  $('#restyleSw').checked = S.restyle; $('#fillSw').checked = !S.strict; $('#liveSw').checked = S.live;
   buildMenus();
 
   const want = (location.hash.match(/p=([a-z0-9]+)/) || [])[1] || store.get('last');
@@ -250,7 +250,7 @@ function setStyle(i) {
 }
 function setRestyle(on) { S.restyle = on; store.set('restyle', on ? '1' : '0'); $('#restyleSw').checked = on; }
 $('#restyleSw').onchange = (e) => setRestyle(e.target.checked);
-$('#strictSw').onchange = (e) => { S.strict = e.target.checked; store.set('strict', S.strict ? '1' : '0'); schedule(); };
+$('#fillSw').onchange = (e) => { S.strict = !e.target.checked; store.set('strict', S.strict ? '1' : '0'); schedule(); };
 $('#liveSw').onchange = (e) => {
   S.live = e.target.checked; store.set('live', S.live ? '1' : '0');
   clearTimeout(coachTimer); if (S.live) runCoach(); renderCoach();
@@ -482,7 +482,7 @@ function renderCoach() {
   empty.textContent = c.runs.size ? 'Reading your draft…'
     : c.shownSeq ? 'No tips left. Keep writing.'
     : ta.value.trim().length < 3 ? 'Write a few lines and the coach will read them.'
-    : S.live ? 'The coach reads your draft each time you pause.' : 'Live coaching is off. Press Review when you want notes.';
+    : S.live ? 'The coach reads your draft each time you pause.' : 'Keep improving is off. Press Review when you want notes.';
 }
 
 function resetCoach() {
