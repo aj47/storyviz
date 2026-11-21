@@ -11,7 +11,7 @@ const S = {
   packs: [], pack: null, project: null, projects: [],
   strict: !flag('fill', true), restyle: flag('restyle', true), live: flag('live', true), improve: flag('improve', true), styleIdx: 0,
   scenes: new Map(), seq: 0, cur: 0, shown: null, paras: [],
-  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null, research: [] },
+  coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null, research: [], fills: { opts: new Map(), asked: new Set(), busy: null } },
 };
 const tipEls = new WeakMap();
 
@@ -103,7 +103,7 @@ function loadProject(p) {
     S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
-  applyPack(); restoreCoach(p.coach); restoreResearch(p.research);
+  applyPack(); restoreCoach(p.coach); restoreResearch(p.research); restoreFills(p.fills);
   onText(true, false);
 }
 
@@ -131,21 +131,29 @@ $('#name').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key =
 $('#name').addEventListener('blur', () => { if (!$('#name').value.trim()) setName('Untitled'); });
 
 // ---------- saving ----------
-let saveTimer = 0, dirty = false, saveChain = Promise.resolve();
+// Every save says why it happened. The server turns named changes into versions of their own in History.
+let saveTimer = 0, dirty = false, saveChain = Promise.resolve(); const reasons = new Set();
 const SAVE_LABEL = { saved: 'Saved', dirty: 'Save', saving: 'Saving…', error: 'Not saved. Retry' };
 function setSaveState(state) { const b = $('#saveBtn'); b.textContent = SAVE_LABEL[state]; b.className = 'save ' + state; }
-function markDirty() {
+function markDirty(why = 'Edited') {
   if (!S.project) return;
-  dirty = true; setSaveState('dirty');
+  reasons.add(why); dirty = true; setSaveState('dirty');
   clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 800);
 }
 function snapshot(p) {
   p.name = $('#name').value.trim() || 'Untitled'; p.text = ta.value; p.pack = S.pack.id; p.coach = S.coach.saved;
-  p.research = S.coach.research.filter((r) => r.status === 'done').map(({ q, sources, lines }) => ({ q, sources, lines }));
+  p.research = S.coach.research.filter((r) => r.status === 'done').map(({ q, sources, lines, rewrote }) => ({ q, sources, lines, rewrote }));
+  const f = S.coach.fills; p.fills = [...f.asked].filter((slot) => f.opts.get(slot)?.length).map((slot) => ({ slot, opts: f.opts.get(slot) }));
   const kept = new Map();
   S.paras.forEach((para, i) => {
-    const sc = S.scenes.get(keyOf(para.text));
-    if (sc && sc.status === 'done' && sc.raw.length && !kept.has(sc.key)) kept.set(sc.key, { key: sc.key, idx: i, text: para.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '' });
+    // While a paragraph's new drawing is still on its way, the drawing it has now is the one that is saved.
+    let sc = S.scenes.get(keyOf(para.text));
+    if (!(sc && sc.status === 'done' && sc.raw.length)) {
+      sc = null;
+      for (const x of S.scenes.values()) if (x.pack === S.pack.id && x.idx === i && x.status === 'done' && x.raw.length && (!sc || x.seq > sc.seq)) sc = x;
+    }
+    const key = sc?.key.replace(/\|old$/, '');
+    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '' });
   });
   p.scenes = [...kept.values()];
 }
@@ -154,7 +162,8 @@ function saveNow() {
   clearTimeout(saveTimer);
   const p = S.project; if (!p || !dirty) return saveChain;
   dirty = false; snapshot(p); setSaveState('saving');
-  const body = JSON.stringify(p);
+  const why = [...reasons]; reasons.clear();
+  const body = JSON.stringify({ ...p, why });
   saveChain = saveChain.then(async () => {
     try {
       const r = await api('PUT', '/api/projects/' + p.id, body); p.updatedAt = r.updatedAt;
@@ -162,6 +171,7 @@ function saveNow() {
       if (S.project === p && !dirty) setSaveState('saved');
     } catch (e) {
       console.warn('save failed', e);
+      why.forEach((w) => reasons.add(w));
       if (S.project === p) { dirty = true; setSaveState('error'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 4000); }
     }
   });
@@ -262,7 +272,7 @@ $('#redrawBtn').onclick = () => redraw();
 $('#sampleBtn').onclick = () => { ta.value = S.pack.placeholder || ''; ta.focus(); ta.setSelectionRange(0, 0); onText(true); };
 
 // ---------- editor ----------
-let sceneTimer = 0, coachTimer = 0;
+let sceneTimer = 0, coachTimer = 0, fillTimer = 0;
 const SCENE_PAUSE = 2500, COACH_PAUSE = 4000, IMPROVE_PAUSE = 6000;
 function onText(immediate = false, changed = true) {
   S.paras = paragraphs(ta.value); syncCurrent(); renderStats(); renderBackdrop(); renderPages();
@@ -273,13 +283,24 @@ function onText(immediate = false, changed = true) {
   // a request for a half-typed sentence would be stale before it started, and its replacement queues again.
   clearTimeout(sceneTimer); sceneTimer = setTimeout(schedule, immediate ? 50 : SCENE_PAUSE);
   clearTimeout(coachTimer); if (S.live) coachTimer = setTimeout(runCoach, immediate ? 200 : COACH_PAUSE);
-  renderCoach();
+  clearTimeout(fillTimer); if (S.live) fillTimer = setTimeout(runFills, immediate ? 400 : COACH_PAUSE);
+  renderBlanks(); renderCoach();
 }
 function moved(force = false) { if (syncCurrent() || force) { renderBackdrop(); renderPages(); showCurrent(); } }
 let lastEdit = 0;
 ta.addEventListener('input', () => { lastEdit = performance.now(); onText(); });
 ta.addEventListener('scroll', () => { $('#backdrop').scrollTop = ta.scrollTop; });
 for (const ev of ['keyup', 'click', 'focus']) ta.addEventListener(ev, () => moved());
+// A click inside a blank selects all of it, so typing replaces it, and brings up its suggestions.
+ta.addEventListener('click', () => {
+  const pos = ta.selectionStart; if (pos !== ta.selectionEnd) return;
+  for (const m of ta.value.matchAll(BLANK)) {
+    if (pos <= m.index || pos >= m.index + m[0].length) continue;
+    ta.setSelectionRange(m.index, m.index + m[0].length); setTab('tips');
+    const el = $$('#blanks .blank').find((x) => x.dataset.slot === m[0]); if (!el) return;
+    el.scrollIntoView({ block: 'nearest' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 900);
+  }
+});
 
 function syncCurrent() {
   const pos = ta.selectionStart; let idx = S.paras.findIndex((p) => pos >= p.start && pos <= p.end + 1);
@@ -299,6 +320,7 @@ function renderBackdrop() {
   const add = (quote, cls) => { const i = findQuote(text, quote); if (i >= 0) marks.push({ a: i, b: i + quote.length, cls }); };
   c.tips.forEach((t) => { if (!tipEls.get(t)?.hidden) add(t.quote, 'tip' + (c.hot === t ? ' hot' : '')); });
   if (c.hot && c.good.includes(c.hot)) add(c.hot.quote, 'hot good');
+  for (const m of text.matchAll(BLANK)) marks.push({ a: m.index, b: m.index + m[0].length, cls: 'slot' + (c.hotSlot === m[0] ? ' hot' : '') });
   marks.sort((x, y) => x.a - y.a);
   const cur = S.paras.length > 1 ? S.paras[S.cur] : null; let html = '', open = false;
   const cuts = new Set([0, text.length]); if (cur) { cuts.add(cur.start); cuts.add(cur.end); }
@@ -450,7 +472,7 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null } 
   } catch (e) { if (sc.ctrl.signal.aborted) return; sc.status = 'error'; sc.error = String(e.message || e); }
   if (sc.status === 'done') {
     for (const [k, v] of S.scenes) if (k.endsWith('|old') && v.idx === idx) S.scenes.delete(k);
-    markDirty();
+    markDirty(`Scene ${idx + 1} ${base ? (guide ? 'guided' : 'updated') : fresh ? 'redrawn' : 'drawn'}`);
   }
   renderPages();
   // Mid-typing, the pause timer sends the follow-up; otherwise the edit made during the wait goes out now.
@@ -505,7 +527,8 @@ function queueItems() {
   }
   for (const r of c.runs.values()) { const stale = r.text !== ta.value; items.push({ o: r, kind: 'coach', title: 'Review', sub: stale ? 'older draft' : '', text: r.text, stale }); }
   if (c.factBusy) items.push({ o: c.factBusy, kind: 'facts', title: 'Fact check', sub: '', text: c.factBusy.quotes.join(' · ') });
-  for (const r of c.research) if (['search', 'wait', 'gen'].includes(r.status)) items.push({ o: r, kind: 'research', title: 'Research', sub: '', text: r.q });
+  for (const r of c.research) if (['search', 'wait', 'gen'].includes(r.status)) items.push({ o: r, kind: 'research', title: 'Agent', sub: '', text: r.q });
+  if (c.fills.busy) items.push({ o: c.fills.busy, kind: 'fills', title: 'Blank suggestions', sub: '', text: c.fills.busy.slots.join(' · ') });
   return items;
 }
 function renderQueue() {
@@ -553,6 +576,7 @@ function queueAct(id, act, guide = '') {
   } else if (it.kind === 'improve') { it.sc.round = PLAN.length; stopImproving(it.sc); markDirty(); }
   else if (it.kind === 'coach') { o.ctrl.abort(); c.runs.delete(o.seq); if (act === 'refresh') runCoach(true); renderCoach(); }
   else if (it.kind === 'facts') { o.abort(); c.factBusy = null; }
+  else if (it.kind === 'fills') { o.abort(); c.fills.busy = null; o.slots.forEach((s) => c.fills.asked.add(s)); renderBlanks(true); }
   else if (it.kind === 'research') { o.ctrl.abort(); c.research = c.research.filter((r) => r !== o); renderResearch(); }
   renderQueue();
 }
@@ -569,7 +593,7 @@ const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort(
 function nextToImprove() {
   if (!S.improve || improving || !S.pack || S.pack.visual === 'diagram' || document.hidden) return null;
   // Improvement passes share the queue with everything else, so they wait until nothing the writer asked for is in it.
-  const asked = S.coach.runs.size || S.coach.factBusy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
+  const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
   if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
   for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && (sc.round || 0) < PLAN.length && !sc.impError) return sc; }
@@ -583,7 +607,7 @@ async function improveRound(sc) {
   if (results.includes('aborted')) return;
   if (results.every((r) => r === 'error')) sc.impError = true;
   // A round that changed nothing means Kimi has nothing left to add.
-  else { sc.round = results.some((r) => r > 0) ? round + 1 : PLAN.length; markDirty(); }
+  else { const added = results.some((r) => r > 0); sc.round = added ? round + 1 : PLAN.length; markDirty(added ? `Scene ${sc.idx + 1} improved (${PLAN[round].join(', ')})` : 'Edited'); }
   renderPages();
 }
 async function improveOnce(sc, focus) {
@@ -677,7 +701,7 @@ function tick() {
   $('#coachStatus').textContent = runs.some((r) => r.status === 'gen') ? 'reading…'
     : waiting.length ? `in queue ${Math.round((performance.now() - Math.min(...waiting.map((r) => r.t0))) / 1000)}s` : S.coach.factBusy ? 'checking facts…' : '';
   $('#reviewBtn').disabled = runs.length > 0 || ta.value.trim().length < 3;
-  researchStatus();
+  researchStatus(); blanksStatus();
   const drawable = (S.paras[S.cur]?.text.length || 0) >= 12;
   $('#redrawBtn').disabled = !drawable || Boolean(act && flying(act)); $('#guideBtn').disabled = !drawable;
   renderQueue();
@@ -705,14 +729,15 @@ $('#moreTips').onclick = () => { S.coach.allTips = true; layoutTips(); renderBac
 function renderCoach() {
   const c = S.coach; const tips = $('#tips').children.length, ideas = $('#asks').children.length + $('#next').children.length + $('#details').children.length;
   const stages = S.pack?.structure?.stages || []; const done = stages.filter((g) => c.states[g.id]?.state === 'done').length;
-  $('#tipsCount').textContent = tips || ''; $('#ideasCount').textContent = ideas || '';
+  const blanks = $('#blanks').children.length;
+  $('#tipsCount').textContent = tips + blanks || ''; $('#ideasCount').textContent = ideas || '';
   $('#researchCount').textContent = c.research.reduce((n, r) => n + r.lines.filter((o) => o.k === 'finding').length, 0) || '';
   $('#stagesCount').textContent = stages.length && c.shownSeq ? `${done}/${stages.length}` : '';
   $('#reviewBtn').hidden = S.live;
   $('#detailsWrap').hidden = !$('#details').children.length;
   $('#goodWrap').hidden = !$('#good').children.length; $('#asksWrap').hidden = !$('#asks').children.length; $('#nextWrap').hidden = !$('#next').children.length;
   $('#ideasEmpty').hidden = ideas > 0;
-  const empty = $('#tipsEmpty'); empty.hidden = tips > 0 || $('#good').children.length > 0;
+  const empty = $('#tipsEmpty'); empty.hidden = tips > 0 || blanks > 0 || $('#good').children.length > 0;
   empty.textContent = c.runs.size ? 'Reading your draft…'
     : c.shownSeq ? 'No tips left. Keep writing.'
     : ta.value.trim().length < 3 ? 'Write a few lines and the coach will read them.'
@@ -769,7 +794,7 @@ async function runCoach(force = false) {
   } catch { /* aborted or failed */ }
   c.runs.delete(run.seq);
   if (run.status === 'done' && run.seq >= c.shownSeq && run.project === S.project?.id && run.pack === S.pack.id) {
-    c.saved = { text: run.text, pack: run.pack, lines: run.lines }; markDirty();
+    c.saved = { text: run.text, pack: run.pack, lines: run.lines }; markDirty('Coach notes');
     checkFacts(run);
   }
   renderCoach();
@@ -793,7 +818,7 @@ async function checkFacts(run) {
   } catch { /* aborted or failed */ }
   if (c.factBusy !== ctrl) return;
   c.factBusy = null;
-  if (ok) { c.factRuns.push(fr); markDirty(); }
+  if (ok) { c.factRuns.push(fr); markDirty('Coach notes'); }
 }
 
 function coachLine(run, o) {
@@ -826,13 +851,13 @@ function coachLine(run, o) {
   else if (o.k === 'detail' && o.text) {
     const el = document.createElement('div'); el.className = 'detail';
     el.innerHTML = `<button class="line">${esc(o.text)}</button>${wiki ? `<span class="src">${wiki}</span>` : ''}`;
-    el.querySelector('button').onclick = () => { addLine(o.text); el.remove(); renderCoach(); };
+    el.querySelector('button').onclick = () => { addLine(o.text, 'Added a fact'); el.remove(); renderCoach(); };
     $('#details').appendChild(el);
   } else if (o.k === 'stage' && o.id) { c.states[o.id] = o; renderStages(); }
   else if (o.k === 'ask' && o.text) { const el = document.createElement('div'); el.className = 'line'; el.textContent = o.text; $('#asks').appendChild(el); }
   else if (o.k === 'next' && o.text) {
     const el = document.createElement('button'); el.className = 'line'; el.textContent = o.text;
-    el.onclick = () => { addLine(o.text); el.remove(); renderCoach(); };
+    el.onclick = () => { addLine(o.text, 'Added a suggested line'); el.remove(); renderCoach(); };
     $('#next').appendChild(el);
   } else if (o.k === 'score') {
     const cell = (n, l) => { const v = Math.max(0, Math.min(100, Math.round(Number(n) || 0))); return `<div class="score">${l}<b>${v}</b><div class="bar"><i style="width:${v}%"></i></div></div>`; };
@@ -841,45 +866,146 @@ function coachLine(run, o) {
   }
   renderCoach();
 }
-// ---------- research ----------
-// The writer sends the coach to look something up. Sources show as soon as the search returns;
-// the findings follow when the model has read them. A finding is one click away from the draft.
+// ---------- blanks ----------
+// A blank is a slot in square brackets the writer still has to fill, like [specific cooling step].
+// The coach suggests what could go in each one; a click puts the suggestion into the draft.
+const BLANK = /\[(?=[^\]]*[A-Za-z])[^\[\]\n]{2,60}\](?!\()/g;
+const blanksIn = (text) => [...new Set([...text.matchAll(BLANK)].map((m) => m[0]))];
+const sameSlot = (a, b) => String(a).replace(/[\[\]]/g, '').trim().toLowerCase() === String(b).replace(/[\[\]]/g, '').trim().toLowerCase();
+function restoreFills(saved) {
+  const f = S.coach.fills; f.busy?.abort(); f.busy = null; f.opts = new Map(); f.asked = new Set();
+  for (const x of Array.isArray(saved) ? saved : []) if (x?.slot && Array.isArray(x.opts)) { f.opts.set(x.slot, x.opts); f.asked.add(x.slot); }
+  renderBlanks(true);
+}
+let blanksSig = '';
+function renderBlanks(force = false) {
+  const f = S.coach.fills, slots = blanksIn(ta.value);
+  const sig = slots.map((s) => `${s}|${(f.opts.get(s) || []).length}|${f.asked.has(s) ? 1 : 0}|${f.busy?.slots.includes(s) ? 1 : 0}`).join('\n') + S.live;
+  if (!force && sig === blanksSig) return;
+  blanksSig = sig; $('#blanksWrap').hidden = !slots.length;
+  $('#fillAllBtn').hidden = slots.length < 2;
+  $('#blanks').innerHTML = slots.map((slot) => {
+    const opts = f.opts.get(slot) || [], picks = opts.filter((o) => o.text), search = opts.find((o) => o.search)?.search;
+    const rows = picks.map((o) => `<div class="detail"><button class="line" data-j="${opts.indexOf(o)}" title="Put this in the blank">${esc(o.text)}</button>`
+      + (o.url || o.who ? `<span class="src">${esc(o.who || '')}${o.who && o.url ? ' · ' : ''}${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title || '')}">${esc(hostOf(o.url))}</a>` : ''}</span>` : '') + '</div>').join('');
+    const hint = f.busy?.slots.includes(slot) ? '<p class="empty" data-wait></p>'
+      : picks.length ? ''
+      : f.asked.has(slot) ? `<p class="empty">No source covers this yet. <button class="link" data-act="agent" data-search="${esc(search || '')}">Send the agent to find it</button></p>`
+      : S.live ? '<p class="empty">Suggestions come when you pause.</p>' : '<p class="empty"><button class="link" data-act="suggest">Suggest what goes here</button></p>';
+    return `<div class="blank" data-slot="${esc(slot)}"><button class="slot" data-act="select" title="Show it in the draft">${esc(slot)}</button>${rows}${hint}</div>`;
+  }).join('');
+  blanksStatus();
+}
+function blanksStatus() {
+  const run = S.coach.fills.busy; if (!run) return;
+  const text = run.status === 'gen' ? 'Reading the sources…' : `Finding suggestions. In queue ${Math.round((performance.now() - run.t0) / 1000)}s`;
+  $$('#blanks [data-wait]').forEach((el) => { el.textContent = text; });
+}
+// Runs by itself when the writer pauses: one request covers every blank that has no suggestions yet.
+async function runFills(force = false) {
+  const f = S.coach.fills; if (!S.pack || f.busy) return;
+  const slots = blanksIn(ta.value).filter((s) => !f.asked.has(s) || (force === true && !(f.opts.get(s) || []).some((o) => o.text))).slice(0, 6);
+  if (!slots.length) return;
+  const run = Object.assign(new AbortController(), { slots, t0: performance.now(), status: 'wait' }); f.busy = run; renderBlanks(true);
+  const fresh = new Set();
+  try {
+    await sse('/api/fill', { pack: S.pack.id, text: ta.value, slots }, run.signal, (ev) => {
+      if (ev.type === 'prompt') run.prompt = ev.text;
+      else if (ev.type === 'first') run.status = 'gen';
+      else if (ev.type === 'line') {
+        const o = parseLine(ev.raw), slot = o && slots.find((x) => sameSlot(x, o.slot)); if (!slot || f.busy !== run) return;
+        if (!fresh.has(slot)) { fresh.add(slot); f.opts.set(slot, []); }
+        const list = f.opts.get(slot); if (list.length < 3 && !list.some((x) => x.text === o.text)) list.push({ ...o, slot });
+        renderBlanks(true); renderCoach();
+      }
+    });
+  } catch { /* aborted or failed */ }
+  if (f.busy !== run) return;
+  f.busy = null; slots.forEach((s) => f.asked.add(s));
+  if (fresh.size) markDirty('Coach notes');
+  renderBlanks(true); renderCoach();
+  if (S.live) runFills();
+}
+function pickFill(slot, o) {
+  const i = ta.value.indexOf(slot); if (i < 0) return;
+  ta.value = ta.value.split(slot).join(o.text);
+  ta.focus(); ta.setSelectionRange(i, i + o.text.length); S.coach.hotSlot = null; onText(); markDirty(`Filled ${slot}`);
+}
+$('#blanks').addEventListener('click', (e) => {
+  const box = e.target.closest('.blank'), b = e.target.closest('button'); if (!box || !b) return;
+  const slot = box.dataset.slot, f = S.coach.fills;
+  if (b.dataset.j) pickFill(slot, f.opts.get(slot)[Number(b.dataset.j)]);
+  else if (b.dataset.act === 'select') selectQuote(slot);
+  else if (b.dataset.act === 'suggest') runFills(true);
+  else if (b.dataset.act === 'agent') { setTab('research'); ask(`Find ${b.dataset.search || 'what goes in ' + slot} and fill in the blank ${slot}`); }
+});
+$('#blanks').addEventListener('mouseover', (e) => { const slot = e.target.closest('.blank')?.dataset.slot; if (slot !== S.coach.hotSlot) { S.coach.hotSlot = slot; renderBackdrop(); } });
+$('#blanks').addEventListener('mouseleave', () => { S.coach.hotSlot = null; renderBackdrop(); });
+$('#fillAllBtn').onclick = () => { setTab('research'); ask('Fill in every blank in square brackets'); };
+
+// ---------- agent ----------
+// The writer sends the agent to do a job: look something up, fill the blanks, rewrite the draft, or all of it.
+// Sources show as soon as the search returns. Changes go straight into the draft when the answer lands,
+// with an Undo on the card and a version in History; findings are one click away from the draft.
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return 'source'; } };
+const wordCount = (t) => (String(t).match(/\S+/g) || []).length;
 function restoreResearch(saved) {
   const c = S.coach; c.research.forEach((r) => r.ctrl?.abort());
-  c.research = (Array.isArray(saved) ? saved : []).filter((r) => r && r.q).map((r) => ({ q: String(r.q), sources: r.sources || [], lines: r.lines || [], status: 'done' }));
+  c.research = (Array.isArray(saved) ? saved : []).filter((r) => r && r.q).map((r) => ({ q: String(r.q), sources: r.sources || [], lines: r.lines || [], rewrote: r.rewrote, status: 'done' }));
   renderResearch();
 }
 function renderResearch() {
   const c = S.coach;
   $('#research').innerHTML = c.research.map((r, i) => {
-    const answer = r.lines.find((o) => o.k === 'answer');
-    const finds = r.lines.map((o, j) => (o.k !== 'finding' ? '' : `<div class="detail"><button class="line" data-i="${i}" data-j="${j}" title="Add to the draft">${esc(o.text)}</button><span class="src">${esc(o.who || '')}${o.who ? ' · ' : ''}<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title)}">${esc(hostOf(o.url))}</a></span></div>`)).join('');
+    const answer = r.lines.find((o) => o.k === 'answer'), over = r.status === 'done';
+    const link = (o) => (o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title)}">${esc(hostOf(o.url))}</a>` : '');
+    const finds = r.lines.map((o, j) => (o.k !== 'finding' ? '' : `<div class="detail"><button class="line" data-i="${i}" data-j="${j}" title="Add to the draft">${esc(o.text)}</button><span class="src">${esc(o.who || '')}${o.who ? ' · ' : ''}${link(o)}</span></div>`)).join('');
+    const edits = r.lines.map((o) => (o.k !== 'edit' ? '' : `<div class="chg ${o.missed ? 'missed' : ''}"><s>${esc(o.quote)}</s> <b>${esc(o.text) || '(cut)'}</b><span class="src">${[o.missed ? 'Not applied: those words are no longer in the draft' : esc(o.note || ''), link(o)].filter(Boolean).join(' · ')}</span></div>`)).join('');
+    const rewrote = r.rewrote ? `<div class="chg"><b>Rewrote the draft</b><span class="src">${r.rewrote[0]} words before, ${r.rewrote[1]} after</span></div>` : '';
+    const held = over && r.held ? `<div class="chg"><b>The draft changed while the agent worked.</b><span class="src">Its rewrite was made from the earlier text.</span><button class="mini" data-apply="${i}">Use the rewrite anyway</button></div>` : '';
+    const undo = r.after != null ? `<div class="rs-undo" data-u="${i}"><button class="mini" data-undo="${i}">Undo these changes</button><span class="src">Edited since. Use History to go back.</span></div>` : '';
     const srcs = r.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(hostOf(s.url))}${s.published ? ' ' + esc(s.published.slice(0, 4)) : ''} · ${esc(s.title)}</a>`).join('');
     return `<div class="rs"><div class="rs-q"><span>${esc(r.q)}</span><button class="mini" data-x="${i}" title="${r.status === 'done' || r.status === 'error' ? 'Remove' : 'Stop'}">×</button></div>`
       + `<div class="rs-status ${r.status === 'error' ? 'err' : ''}" data-s="${i}"></div>`
-      + (answer ? `<div class="line answer">${esc(answer.text)}</div>` : '') + finds
+      + (answer ? `<div class="line answer">${esc(answer.text)}</div>` : '') + (over ? rewrote + edits + held + undo : '') + finds
       + (srcs ? `<div class="rs-srcs"><h3>Sources read</h3>${srcs}</div>` : '') + '</div>';
   }).join('');
   researchStatus(); renderCoach();
 }
 function researchStatus() {
   S.coach.research.forEach((r, i) => {
+    const u = $(`#research [data-u="${i}"]`); if (u) u.classList.toggle('late', ta.value !== r.after);
     const el = $(`#research [data-s="${i}"]`); if (!el) return;
     const secs = Math.round((performance.now() - (r.t0 || 0)) / 1000), n = r.sources.length;
     el.textContent = r.status === 'search' ? 'Searching the web…'
-      : r.status === 'wait' ? `Found ${n} source${n === 1 ? '' : 's'}. Kimi reads them after the queue: ${secs}s`
-      : r.status === 'gen' ? 'Reading the sources…'
+      : r.status === 'wait' ? `${n ? `Found ${n} source${n === 1 ? '' : 's'}. ` : ''}In the queue: ${secs}s`
+      : r.status === 'gen' ? 'Working…'
       : r.status === 'error' ? (r.error || 'That did not work. Try again.') : '';
     el.hidden = !el.textContent;
   });
 }
+// Puts the agent's changes into the draft. A full rewrite made from text that has since changed is held back for the writer to decide.
+async function applyAgent(r, anyway = false) {
+  const edits = r.lines.filter((o) => o.k === 'edit'), paras = r.lines.filter((o) => o.k === 'draft');
+  if (!edits.length && !paras.length) return;
+  if (paras.length && ta.value !== r.sent && !anyway) { r.held = true; return; }
+  // What was typed up to now is saved first, so History keeps the state from just before the agent's change.
+  await saveNow();
+  const before = ta.value; let text = paras.length ? paras.map((o) => o.text.trim()).join('\n\n') : before;
+  for (const o of edits) {
+    const i = findQuote(text, o.quote); if (i < 0) { o.missed = true; continue; }
+    text = text.slice(0, i) + o.text + text.slice(i + o.quote.length);
+  }
+  r.held = false; if (text === before) return;
+  if (paras.length) r.rewrote = [wordCount(before), wordCount(text)];
+  r.before = before; r.after = text; ta.value = text; onText(true); markDirty(`Agent: ${r.q.slice(0, 60)}`);
+}
 async function ask(q) {
   const c = S.coach; q = q.trim(); if (!S.pack || q.length < 3) return;
-  const r = { q, sources: [], lines: [], status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
+  const r = { q, sent: ta.value, sources: [], lines: [], status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
   c.research.unshift(r); renderResearch();
   try {
-    await sse('/api/ask', { pack: S.pack.id, text: ta.value, ask: q }, r.ctrl.signal, (ev) => {
+    await sse('/api/ask', { pack: S.pack.id, text: r.sent, ask: q }, r.ctrl.signal, (ev) => {
       if (ev.type === 'prompt') r.prompt = ev.text;
       else if (ev.type === 'sources') { r.sources = ev.sources || []; r.status = 'wait'; }
       else if (ev.type === 'first') r.status = 'gen';
@@ -891,8 +1017,9 @@ async function ask(q) {
     if (r.status !== 'done' && r.status !== 'error') r.status = r.lines.length ? 'done' : 'error';
   } catch (e) { if (r.ctrl.signal.aborted) return; r.status = 'error'; r.error = String(e.message || e); }
   if (!c.research.includes(r) || r.project !== S.project?.id) return;
-  if (r.status === 'done' && !r.lines.some((o) => o.k === 'finding') && !r.lines.some((o) => o.k === 'answer')) { r.status = 'error'; r.error = 'The sources did not answer that. Try other words.'; }
-  renderResearch(); if (r.status === 'done') markDirty();
+  if (r.status === 'done' && !r.lines.some((o) => ['finding', 'answer', 'edit', 'draft'].includes(o.k))) { r.status = 'error'; r.error = 'Nothing came back. Try other words.'; }
+  if (r.status === 'done') { await applyAgent(r); markDirty(r.after != null ? undefined : 'Coach notes'); }
+  renderResearch();
 }
 $('#askText').addEventListener('input', () => { $('#askBtn').disabled = $('#askText').value.trim().length < 3; });
 $('#askText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#askForm').requestSubmit(); } });
@@ -900,18 +1027,54 @@ $('#askForm').addEventListener('submit', (e) => {
   e.preventDefault(); const box = $('#askText'); if (box.value.trim().length < 3) return;
   ask(box.value); box.value = ''; $('#askBtn').disabled = true;
 });
-$('#research').addEventListener('click', (e) => {
-  const c = S.coach, x = e.target.closest('[data-x]'), f = e.target.closest('button.line');
-  if (x) { const [r] = c.research.splice(Number(x.dataset.x), 1); r?.ctrl?.abort(); renderResearch(); markDirty(); }
-  else if (f) { const r = c.research[Number(f.dataset.i)]; const [o] = r.lines.splice(Number(f.dataset.j), 1); addLine(o.text); renderResearch(); markDirty(); }
+$('#research').addEventListener('click', async (e) => {
+  const c = S.coach, x = e.target.closest('[data-x]'), f = e.target.closest('button.line'), u = e.target.closest('[data-undo]'), a = e.target.closest('[data-apply]');
+  if (x) { const [r] = c.research.splice(Number(x.dataset.x), 1); r?.ctrl?.abort(); renderResearch(); markDirty('Coach notes'); }
+  else if (f) { const r = c.research[Number(f.dataset.i)]; const [o] = r.lines.splice(Number(f.dataset.j), 1); addLine(o.text, 'Added a finding'); renderResearch(); }
+  else if (u) {
+    const r = c.research[Number(u.dataset.undo)]; if (ta.value !== r.after) return;
+    ta.value = r.before; r.after = null; r.rewrote = null; r.lines = r.lines.filter((o) => o.k !== 'edit' && o.k !== 'draft');
+    onText(true); markDirty(`Undid agent: ${r.q.slice(0, 50)}`); renderResearch();
+  } else if (a) { const r = c.research[Number(a.dataset.apply)]; await applyAgent(r, true); renderResearch(); }
 });
 
-function addLine(text) { const v = ta.value.replace(/\s+$/, ''); ta.value = v + (v ? ' ' : '') + text; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); onText(); }
+// ---------- history ----------
+// Every version the server has kept of this project: the text, the drawings and the coach's notes.
+function verLine(v, i) {
+  const bits = [new Date(v.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })];
+  if (v.words >= 0) bits.push(`${v.words} word${v.words === 1 ? '' : 's'}`, `${v.scenes} drawing${v.scenes === 1 ? '' : 's'}`);
+  return `<div class="ver" data-rev="${esc(v.rev)}"><div class="ver-head"><div><b>${esc(v.label)}</b><small>${i ? '' : 'Current · '}${esc(bits.join(' · '))}</small></div>`
+    + `<button class="mini" data-act="view">View</button>${i ? '<button class="mini" data-act="restore">Restore</button>' : ''}</div><pre hidden></pre></div>`;
+}
+async function showHistory() {
+  closeMenus(); const note = $('#historyEmpty'); note.hidden = false; note.textContent = 'Loading…'; $('#history').innerHTML = ''; $('#historyDlg').showModal();
+  try {
+    await saveNow();
+    const r = await api('GET', `/api/projects/${S.project.id}/versions`);
+    $('#history').innerHTML = r.versions.map(verLine).join('');
+    note.hidden = r.versions.length > 0; note.textContent = r.off ? 'Version history is off on this server (git is missing).' : 'No versions yet.';
+  } catch (e) { note.textContent = 'Could not load the history. ' + String(e.message || e).slice(0, 120); }
+}
+$('#historyBtn').onclick = showHistory;
+$('#history').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-act]'), row = e.target.closest('.ver'); if (!b || !row) return;
+  const pre = row.querySelector('pre');
+  if (b.dataset.act === 'view' && !pre.hidden) { pre.hidden = true; b.textContent = 'View'; return; }
+  const v = await api('GET', `/api/projects/${S.project.id}/versions/${row.dataset.rev}`);
+  if (b.dataset.act === 'view') { pre.textContent = v.text || '(empty)'; pre.hidden = false; b.textContent = 'Hide'; return; }
+  await saveNow();
+  const when = row.querySelector('small').textContent.split(' · ')[0];
+  loadProject({ ...v, id: S.project.id, createdAt: S.project.createdAt });
+  markDirty(`Restored the version from ${when}`); await saveNow();
+  $('#historyDlg').close(); ta.focus();
+});
+
+function addLine(text, why = 'Added a line') { const v = ta.value.replace(/\s+$/, ''); ta.value = v + (v ? ' ' : '') + text; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); onText(); markDirty(why); }
 function selectQuote(q) { const i = findQuote(ta.value, q); if (i < 0) return; ta.focus(); ta.setSelectionRange(i, i + q.length); moved(true); }
 function applyFix(o) {
   const i = findQuote(ta.value, o.quote); if (i < 0) return;
   ta.value = ta.value.slice(0, i) + o.fix + ta.value.slice(i + o.quote.length);
-  S.coach.tips = S.coach.tips.filter((t) => t !== o); S.coach.hot = null; ta.focus(); ta.setSelectionRange(i, i + o.fix.length); onText();
+  S.coach.tips = S.coach.tips.filter((t) => t !== o); S.coach.hot = null; ta.focus(); ta.setSelectionRange(i, i + o.fix.length); onText(); markDirty(o.k === 'fact' ? 'Applied a fact fix' : 'Applied a tip');
 }
 
 // Types text into the editor at a steady pace (for recording a take): add ?autotype=16 (characters a second).

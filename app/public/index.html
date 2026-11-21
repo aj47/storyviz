@@ -18,6 +18,7 @@
   <button class="save" id="saveBtn" title="Save now (⌘S)"></button>
   <span class="grow"></span>
   <button class="quiet" id="queueBtn" title="See what is waiting for the model, and cancel or resend it">Queue</button>
+  <button class="quiet" id="historyBtn" title="Every earlier version of this project: text, drawings and notes. Restore any of them.">History</button>
   <button class="quiet" id="openBtn" title="Open a project (⌘O)">Open</button>
   <button class="solid" id="newBtn">New</button>
 </header>
@@ -69,9 +70,13 @@
       <button data-tab="tips">Tips<i id="tipsCount"></i></button>
       <button data-tab="structure">Structure<i id="stagesCount"></i></button>
       <button data-tab="ideas">Ideas<i id="ideasCount"></i></button>
-      <button data-tab="research">Research<i id="researchCount"></i></button>
+      <button data-tab="research">Agent<i id="researchCount"></i></button>
     </nav>
     <div class="pane" data-pane="tips">
+      <div id="blanksWrap" hidden>
+        <h3 class="h-row">Fill the blanks<button class="mini" id="fillAllBtn" title="Send the agent to fill every blank from sources. You can undo it.">Fill all</button></h3>
+        <div id="blanks"></div>
+      </div>
       <p class="empty" id="tipsEmpty"></p>
       <div id="tips"></div>
       <button class="more" id="moreTips" hidden></button>
@@ -89,8 +94,8 @@
     </div>
     <div class="pane" data-pane="research" hidden>
       <form class="ask" id="askForm">
-        <textarea id="askText" class="field" rows="2" maxlength="400" spellcheck="false" placeholder="Send the coach to look something up, e.g. how much water AI actually uses"></textarea>
-        <button class="solid" id="askBtn" disabled>Research</button>
+        <textarea id="askText" class="field" rows="3" maxlength="600" spellcheck="false" placeholder="Tell the agent what to do: fill in the blanks, rewrite the hook, research how much water AI uses"></textarea>
+        <button class="solid" id="askBtn" disabled>Send</button>
       </form>
       <div id="research"></div>
     </div>
@@ -111,6 +116,13 @@
   <div class="dlg-head"><h2>Queue</h2><button class="x" data-close aria-label="Close">×</button></div>
   <p class="empty" id="queueEmpty">Nothing is waiting.</p>
   <div id="queue"></div>
+</dialog>
+
+<dialog id="historyDlg">
+  <div class="dlg-head"><h2>History</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <p class="empty">Every change is kept: typing, agent edits, filled blanks and each drawing. Restoring a version is itself a new version, so nothing is lost.</p>
+  <p class="empty" id="historyEmpty"></p>
+  <div id="history"></div>
 </dialog>
 
 <dialog id="guideDlg">

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -33,17 +34,90 @@ function listProjects() {
   return out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 
-function saveProject(id, b) {
-  const p = {
+function buildProject(id, b) {
+  return {
     id, name: String(b.name || 'Untitled').slice(0, 80), pack: String(b.pack || ''), text: String(b.text || '').slice(0, 200_000),
     scenes: Array.isArray(b.scenes) ? b.scenes.slice(0, 200) : [], coach: b.coach && typeof b.coach === 'object' ? b.coach : null,
     research: Array.isArray(b.research) ? b.research.slice(0, 30) : [],
+    fills: Array.isArray(b.fills) ? b.fills.slice(0, 60) : [],
     createdAt: Number(b.createdAt) || Date.now(), updatedAt: Date.now(),
   };
-  const file = projectFile(id), tmp = file + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(p)); fs.renameSync(tmp, file);
-  return p;
 }
+
+// ---------- version history ----------
+// data/ is its own git repository and every project file is committed as it changes, so any earlier
+// state of the text, the drawings and the coach's notes can be read back or restored.
+const DATA = path.join(ROOT, '..', 'data');
+const git = (...args) => new Promise((resolve, reject) => {
+  execFile('git', ['-c', 'user.name=Storyviz', '-c', 'user.email=storyviz@localhost', ...args], {
+    cwd: DATA, maxBuffer: 64e6, env: { ...process.env, GIT_DIR: path.join(DATA, '.git'), GIT_WORK_TREE: DATA },
+  }, (err, out) => (err ? reject(err) : resolve(out)));
+});
+const gitReady = (async () => {
+  try {
+    if (!fs.existsSync(path.join(DATA, '.git'))) {
+      await git('init', '-q');
+      await git('add', '-A', '--', 'projects');
+      await git('commit', '-q', '--allow-empty', '-m', 'Start of history');
+    }
+    return true;
+  } catch (e) { console.error('version history is off:', e.message); return false; }
+})();
+
+// Saves and commits run one after another, so a commit always holds exactly one saved state.
+let work = Promise.resolve();
+const inOrder = (fn) => { const p = work.then(fn); work = p.catch((e) => console.error('history', e.message)); return p; };
+const QUIET = new Set(['Edited', 'Coach notes']);
+const COMMIT_AFTER = 30_000;
+const uncommitted = new Map(); // project id -> { labels, stats, timer }
+async function commit(id) {
+  const u = uncommitted.get(id); if (!u) return;
+  uncommitted.delete(id); clearTimeout(u.timer);
+  if (!(await gitReady)) return;
+  const named = [...u.labels].filter((l) => !QUIET.has(l));
+  const subject = (named.length ? named : [u.labels.has('Edited') ? 'Edited' : 'Coach notes']).slice(0, 4).join(', ').slice(0, 160);
+  const rel = `projects/${id}.json`;
+  try { await git('add', '-A', '--', rel); await git('commit', '-q', '-m', `${subject}\n\n${u.stats || ''}`, '--', rel); }
+  catch (e) { if (!/nothing to commit|no changes added|did not match/.test(String(e.stdout || '') + e.message)) console.error('commit failed', e.message); }
+}
+function saveProject(id, b) {
+  const labels = (Array.isArray(b.why) ? b.why : []).map((l) => String(l).replace(/\s+/g, ' ').trim().slice(0, 80)).filter(Boolean);
+  if (!labels.length) labels.push('Edited');
+  const loud = labels.some((l) => !QUIET.has(l));
+  return inOrder(async () => {
+    // A named change gets a version of its own: what was typed before it is committed first.
+    if (loud) await commit(id);
+    const p = buildProject(id, b);
+    const file = projectFile(id), tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(p, null, 1)); fs.renameSync(tmp, file);
+    const u = uncommitted.get(id) || { labels: new Set() };
+    labels.forEach((l) => u.labels.add(l));
+    u.stats = `words=${(p.text.match(/\S+/g) || []).length} scenes=${p.scenes.length}`;
+    uncommitted.set(id, u);
+    // Plain typing is gathered into one version every half minute.
+    if (loud) await commit(id); else u.timer ??= setTimeout(() => inOrder(() => commit(id)), COMMIT_AFTER);
+    return p;
+  });
+}
+function deleteProject(id) {
+  return inOrder(async () => {
+    await commit(id);
+    fs.unlinkSync(projectFile(id));
+    uncommitted.set(id, { labels: new Set(['Deleted']), stats: '' });
+    await commit(id);
+  });
+}
+async function listVersions(id) {
+  if (!(await gitReady)) return { versions: [], off: true };
+  const out = await git('log', '-n', '200', '--format=%H%x1f%ct%x1f%s%x1f%b%x1e', '--', `projects/${id}.json`).catch(() => '');
+  const rows = out.split('\x1e').map((r) => r.trim()).filter(Boolean).map((r) => {
+    const [rev, at, label, body = ''] = r.split('\x1f');
+    return { rev, at: Number(at) * 1000, label, words: Number(/words=(\d+)/.exec(body)?.[1] ?? -1), scenes: Number(/scenes=(\d+)/.exec(body)?.[1] ?? -1) };
+  });
+  return { versions: rows };
+}
+async function flushHistory() { for (const id of [...uncommitted.keys()]) await inOrder(() => commit(id)); }
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { flushHistory().finally(() => process.exit(0)); setTimeout(() => process.exit(0), 4000); });
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -261,6 +335,35 @@ async function research(checks) {
   for (let rank = 0; rank < 2; rank++) for (const list of lists) if (list[rank] && !out.some((s) => s.url === list[rank].url)) out.push(list[rank]);
   return out.length ? out.slice(0, 6) : wikiSources(checks.map((c) => c.query));
 }
+// Several searches at once; every query's best hit is taken before anyone's second.
+async function searchMany(queries, per = 2, cap = 6, clip = 1500) {
+  // Exa's open endpoint refuses some calls when several arrive together, so a failed search gets a second try.
+  const lists = await Promise.all(queries.map(async (q, i) => {
+    for (let go = 0; go < 2; go++) {
+      try { await new Promise((r) => setTimeout(r, i * 150 + go * 900)); return await exa(q, per + 1, clip); } catch (e) { console.error('exa failed', e.message); }
+    }
+    return [];
+  }));
+  const out = [];
+  for (let rank = 0; rank <= per; rank++) for (const list of lists) if (list[rank] && !out.some((s) => s.url === list[rank].url)) out.push(list[rank]);
+  return out.slice(0, cap);
+}
+// A blank is a slot in square brackets the writer still has to fill, like [specific cooling step].
+const BLANK = /\[(?=[^\]]*[A-Za-z])[^\[\]\n]{2,60}\](?!\()/g;
+const sentenceAround = (text, i, len) => {
+  const before = text.slice(0, i), after = text.slice(i + len);
+  const a = Math.max(before.lastIndexOf('\n'), before.lastIndexOf('. '), before.lastIndexOf('? '), before.lastIndexOf('! ')) + 1;
+  const m = /[.?!](\s|$)|\n/.exec(after);
+  return text.slice(a, m ? i + len + m.index + 1 : text.length).trim();
+};
+function blanksIn(text) {
+  const out = []; let m; BLANK.lastIndex = 0;
+  while ((m = BLANK.exec(text))) if (!out.some((b) => b.slot === m[0])) out.push({ slot: m[0], sentence: sentenceAround(text, m.index, m[0].length).slice(0, 300) });
+  return out;
+}
+const topicLine = (text) => (String(text).split(/\n/).find((l) => l.trim().length > 8) || '').replace(BLANK, '').trim().slice(0, 140);
+const unbracket = (s) => String(s).replace(/[\[\]]/g, '');
+
 const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 const sourceList = (sources) => sources.map((s, i) => `[${i + 1}] ${s.title} (${[host(s.url), s.published].filter(Boolean).join(', ')})\n${s.text}`).join('\n\n');
 function factRequest(pack, text, checks, sources) {
@@ -271,32 +374,63 @@ function factRequest(pack, text, checks, sources) {
     `sources:\n${sourceList(sources)}`,
   ].join('\n\n');
 }
-function askRequest(pack, text, ask, sources) {
+function agentRequest(pack, text, ask, sources) {
   return [
-    'mode: research', `writing type: ${pack.name}`,
-    `the writer asks:\n"""\n${ask}\n"""`,
-    `draft:\n"""\n${String(text).slice(0, 5000)}\n"""`,
-    `sources:\n${sourceList(sources)}`,
+    'mode: agent', `writing type: ${pack.name}`, `factual: ${pack.factual ? 'yes' : 'no'}`,
+    `the writer's instruction:\n"""\n${ask}\n"""`,
+    `draft:\n"""\n${String(text).slice(0, 9000)}\n"""`,
+    `sources:\n${sources.length ? sourceList(sources) : 'none'}`,
+  ].join('\n\n');
+}
+function fillRequest(pack, text, blanks, sources) {
+  return [
+    'mode: fill', `writing type: ${pack.name}`, `factual: ${pack.factual ? 'yes' : 'no'}`,
+    `draft:\n"""\n${String(text).slice(0, 9000)}\n"""`,
+    `blanks to fill:\n${blanks.map((b) => JSON.stringify(b)).join('\n')}`,
+    `sources:\n${sources.length ? sourceList(sources) : 'none'}`,
   ].join('\n\n');
 }
 
-// The writer sends the coach to look something up. The sources go to the page as soon as the search
-// returns, so there is something to read while the model request waits in the queue.
-async function streamAsk(res, pack, text, ask) {
+// The writer sends the agent to do something: look a thing up, fill the blanks, rewrite the draft, or all
+// of it. The web search runs first and its sources go to the page at once, so there is something to read
+// while the model request waits in the queue.
+const LOOKUP = /research|look ?up|find|search|fact|source|check|verify|how (much|many|long|old|big)|who |when |where |statistic|number|data|fill/i;
+async function streamAgent(res, pack, text, ask) {
   const send = openStream(res);
   let sources = [];
-  try { sources = await exa(ask, 6); } catch (e) { console.error('exa failed', e.message); }
-  if (!sources.length) sources = await wikiSources([topicOf(ask)], 4);
+  if (pack.factual || LOOKUP.test(ask)) {
+    // An instruction about the blanks is not something to search for: the sentences around the blanks are.
+    const topic = topicLine(text), blanks = /fill|blank|bracket|gap|\[/i.test(ask) ? blanksIn(text).slice(0, 4) : [];
+    const queries = blanks.length ? blanks.map((b) => `${unbracket(b.sentence)} (${topic})`) : [topic && !LOOKUP.test(ask) ? `${ask} (${topic})` : ask];
+    sources = await searchMany(queries, queries.length > 1 ? 2 : 5, 7, 1600);
+    if (!sources.length) sources = await wikiSources([topicOf(ask)], 4);
+  }
   send({ type: 'sources', sources: sources.map(({ title, url, published }) => ({ title, url, published })) });
-  if (!sources.length) { send({ type: 'error', message: 'No sources found. Try other words.' }); res.end(); return; }
-  // A finding must name a real source; it reaches the page with that source's title and link.
+  // Anything that cites a source reaches the page with that source's title and link.
   const cite = (l) => {
-    const o = parseLine(l); if (!o) return null;
-    if (o.k === 'answer') return o.text ? JSON.stringify({ k: 'answer', text: o.text }) : null;
-    const s = sources[Number(o.src) - 1]; if (o.k !== 'finding' || !o.text || !s) return null;
-    delete o.src; return JSON.stringify({ ...o, title: s.title, url: s.url });
+    const o = parseLine(l); if (!o || !['edit', 'draft', 'finding', 'answer'].includes(o.k)) return null;
+    const s = sources[Number(o.src) - 1]; delete o.src;
+    if (o.k === 'finding' && (!o.text || !s)) return null;
+    if (o.k === 'edit' && (!o.quote || typeof o.text !== 'string')) return null;
+    if ((o.k === 'draft' || o.k === 'answer') && !o.text) return null;
+    return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
   };
-  const r = res.destroyed ? null : await runAgent(res, send, 'coach', askRequest(pack, text, ask, sources), { maxTokens: 3500, shape: cite });
+  const r = res.destroyed ? null : await runAgent(res, send, 'coach', agentRequest(pack, text, ask, sources), { maxTokens: 7000, shape: cite });
+  if (r) send(r.done);
+  res.end();
+}
+
+// Suggestions for the blanks in square brackets, each tied to the source it came from.
+async function streamFills(res, pack, text, blanks) {
+  const send = openStream(res);
+  const topic = topicLine(text);
+  const sources = pack.factual ? await searchMany(blanks.slice(0, 4).map((b) => `${unbracket(b.sentence)} (${topic})`), 2, 7, 1500) : [];
+  const cite = (l) => {
+    const o = parseLine(l); if (!o || o.k !== 'fill' || !o.slot || !(o.text || o.search)) return null;
+    const s = sources[Number(o.src) - 1]; delete o.src;
+    return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
+  };
+  const r = res.destroyed ? null : await runAgent(res, send, 'coach', fillRequest(pack, text, blanks, sources), { maxTokens: 3500, shape: cite });
   if (r) send(r.done);
   res.end();
 }
@@ -357,12 +491,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/projects' && req.method === 'GET') return json(res, 200, listProjects());
     if (url.pathname.startsWith('/api/projects/')) {
-      const id = url.pathname.slice('/api/projects/'.length), file = projectFile(id);
+      const [id, sub, rev] = url.pathname.slice('/api/projects/'.length).split('/'), file = projectFile(id);
       if (!file) return json(res, 400, { error: 'bad project id' });
-      if (req.method === 'PUT') { const p = saveProject(id, await readBody(req, 4_000_000)); return json(res, 200, { ok: true, updatedAt: p.updatedAt }); }
+      if (sub === 'versions' && req.method === 'GET') {
+        // Whatever was typed since the last version is committed first, so the list starts at the current state.
+        if (!rev) { await inOrder(() => commit(id)); return json(res, 200, await listVersions(id)); }
+        if (!/^[0-9a-f]{7,40}$/.test(rev)) return json(res, 400, { error: 'bad version' });
+        try { const body = await git('show', `${rev}:projects/${id}.json`); res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache' }); res.end(body); }
+        catch { json(res, 404, { error: 'no such version' }); }
+        return;
+      }
+      if (sub) return json(res, 404, { error: 'not found' });
+      if (req.method === 'PUT') { const p = await saveProject(id, await readBody(req, 4_000_000)); return json(res, 200, { ok: true, updatedAt: p.updatedAt }); }
       if (!fs.existsSync(file)) return json(res, 404, { error: 'no such project' });
       if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache' }); res.end(fs.readFileSync(file)); return; }
-      if (req.method === 'DELETE') { fs.unlinkSync(file); return json(res, 200, { ok: true }); }
+      if (req.method === 'DELETE') { await deleteProject(id); return json(res, 200, { ok: true }); }
     }
     if (req.method === 'GET' && url.pathname === '/api/hold') {
       // Test helper: a response that takes ?ms, so a screenshot tool can wait in real time.
@@ -395,9 +538,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/ask') {
       const b = await readBody(req);
       const pack = loadPacks().find((p) => p.id === b.pack);
-      const ask = String(b.ask || '').trim().slice(0, 400);
-      if (!pack || ask.length < 3) { res.writeHead(400); res.end('unknown pack or empty question'); return; }
-      return streamAsk(res, pack, b.text || '', ask);
+      const ask = String(b.ask || '').trim().slice(0, 600);
+      if (!pack || ask.length < 3) { res.writeHead(400); res.end('unknown pack or empty instruction'); return; }
+      return streamAgent(res, pack, b.text || '', ask);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/fill') {
+      const b = await readBody(req);
+      const pack = loadPacks().find((p) => p.id === b.pack);
+      const want = new Set((Array.isArray(b.slots) ? b.slots : []).map(String));
+      const blanks = blanksIn(String(b.text || '')).filter((x) => !want.size || want.has(x.slot)).slice(0, 6);
+      if (!pack || !blanks.length) { res.writeHead(400); res.end('unknown pack or no blanks'); return; }
+      return streamFills(res, pack, b.text || '', blanks);
     }
     if (req.method === 'GET') {
       if (url.pathname.startsWith('/vendor/three/')) {
