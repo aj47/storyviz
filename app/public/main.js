@@ -11,7 +11,7 @@ const S = {
   packs: [], pack: null, project: null, projects: [],
   strict: !flag('fill', true), restyle: flag('restyle', true), live: flag('live', true), improve: flag('improve', true), styleIdx: 0,
   // What the AI may start on its own. Anything the writer asks for by hand always runs.
-  auto: { draw: flag('autoDraw', true), motion: flag('autoMotion', true), facts: flag('autoFacts', true), blanks: flag('autoBlanks', true) }, paused: false, spent: new Map(),
+  auto: { draw: flag('autoDraw', true), facts: flag('autoFacts', true), blanks: flag('autoBlanks', true) }, paused: false, spent: new Map(),
   scenes: new Map(), seq: 0, cur: 0, shown: null, paras: [],
   coach: { seq: 0, shownSeq: 0, runs: new Map(), tips: [], good: [], hot: null, tab: 'tips', states: {}, saved: null, factRuns: [], factBusy: null, research: [], fills: { opts: new Map(), asked: new Set(), busy: null }, dismissed: new Set() },
 };
@@ -273,7 +273,7 @@ $('#liveSw').onchange = (e) => {
   clearTimeout(coachTimer); if (S.live) runCoach(); renderCoach();
 };
 $('#improveSw').onchange = (e) => { S.improve = e.target.checked; store.set('improve', S.improve ? '1' : '0'); if (!S.improve) stopImproving(); };
-const AUTOS = [['autoDraw', 'draw'], ['autoMotion', 'motion'], ['autoFacts', 'facts'], ['autoBlanks', 'blanks']];
+const AUTOS = [['autoDraw', 'draw'], ['autoFacts', 'facts'], ['autoBlanks', 'blanks']];
 for (const [id, k] of AUTOS) $('#' + id).onchange = (e) => {
   S.auto[k] = e.target.checked; store.set(id, S.auto[k] ? '1' : '0');
   if (k === 'draw' && S.auto.draw) schedule(); if (k === 'blanks') { renderBlanks(true); if (S.auto.blanks) runFills(); }
@@ -486,6 +486,12 @@ function earlierVersion(text, wanted) {
 function applyLine(sc, o) {
   const shown = S.shown === sc;
   if (o.t === 'reset') { sc.lines = []; sc.raw = []; sc.shot = null; sc.round = 0; if (shown) { stage.clear(); $('#title').textContent = ''; showShot(null); } return; }
+  if (o.t === 'cut') {
+    const key = actKey({ ...o, t: o.do === 'count' ? 'count' : 'act' }), keep = sc.lines.map((l) => !((l.t === 'act' || l.t === 'count') && actKey(l) === key));
+    sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
+    if (shown) stage.dropAct(key);
+    return;
+  }
   if (o.t === 'drop') {
     const id = String(o.id), keep = sc.lines.map((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id) || (l.t === 'act' && [l.id, l.of, l.from, l.to].includes(id))));
     sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
@@ -643,7 +649,7 @@ const qId = (o) => { if (!qIds.has(o)) qIds.set(o, ++qSeq); return qIds.get(o); 
 function idleWhy() {
   if (performance.now() - lastEdit < IMPROVE_PAUSE) return 'Waiting for you to pause';
   if (document.hidden) return 'Resting while this tab is hidden';
-  if (!S.improve) return 'All caught up. Improve looks is off';
+  if (!S.improve) return 'All caught up. Improve scenes is off';
   return 'About to refine the next scene';
 }
 // Where each kind of work stands, in a line under its switch: a switch that is on with nothing left to do says so.
@@ -656,8 +662,8 @@ function workStatus() {
   const diagram = S.pack?.visual === 'diagram';
   return {
     draw: n ? (scs.length >= n ? `All ${plural(n, 'scene')} drawn` : `${scs.length} of ${plural(n, 'scene')} drawn`) : 'Nothing to draw yet',
-    motion: diagram ? 'Diagrams move on their own' : !scs.length ? 'Needs a drawing first' : moving >= scs.length ? 'Every scene has motion. It runs once per scene; Run now redoes this one' : `${moving} of ${plural(scs.length, 'scene')} have motion`,
-    improve: diagram ? 'Not used for diagrams' : !scs.length ? 'Needs a drawing first' : S.improve ? (full >= scs.length ? 'Refining the scenes in turn, without stopping' : `${full} of ${plural(scs.length, 'scene')} through their first passes`) : `Off. ${full} of ${plural(scs.length, 'scene')} through their first passes`,
+    improve: diagram ? 'Not used for diagrams' : !scs.length ? 'Needs a drawing first'
+      : `${S.improve ? (full >= scs.length && moving >= scs.length ? 'Refining looks, motion and staging, scene by scene, without stopping' : 'Working through the first passes') : 'Off'}. ${moving} of ${plural(scs.length, 'scene')} have motion`,
     review: ta.value.trim().length < 3 ? 'Nothing to read yet' : reviewed ? 'This draft is reviewed. Runs again when the words change' : 'The draft changed since the last review',
     facts: c.factBusy ? 'Checking now' : c.claimsRun ? 'Finding the claims to check' : `${plural(claims, 'claim')} checked. Runs again when the words change`,
     blanks: slots.length ? `${filled} of ${plural(slots.length, 'blank')} have suggestions` : 'No blanks in the draft',
@@ -668,7 +674,7 @@ function queueItems() {
   const c = S.coach, items = [], wanted = new Set(S.paras.map((p) => keyOf(p.text)));
   for (const sc of S.scenes.values()) {
     if (flying(sc)) { const stale = !wanted.has(sc.key); items.push({ o: sc, kind: 'scene', title: `Scene ${sc.idx + 1}`, sub: [sc.updating ? 'update' : 'new drawing', stale ? 'older wording' : '', sc.guide ? 'guided' : ''].filter(Boolean).join(' · '), text: sc.text, stale }); }
-    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: imp.focus === 'motion' ? 'adding motion' : imp.focus === 'refine' ? 'refining' : `improving ${imp.focus}`, text: sc.text });
+    for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: focusWords(imp.focus), text: sc.text });
   }
   for (const r of c.runs.values()) { const stale = r.text !== ta.value; items.push({ o: r, kind: 'coach', title: 'Review', sub: stale ? 'older draft' : '', text: r.text, stale }); }
   if (c.claimsRun) items.push({ o: c.claimsRun, kind: 'claims', title: 'Fact check', sub: 'finding the claims', text: c.claimsRun.text });
@@ -742,9 +748,13 @@ $('#queue').addEventListener('submit', (e) => { e.preventDefault(); const q = e.
 // With the switch on, each finished scene goes back to Kimi in rounds. Round one sends three requests
 // at once, each with its own focus, so the wait in the queue is paid once; the later rounds polish.
 const PLAN = [['subject', 'setting', 'background'], ['polish'], ['polish'], ['polish']];
+const TURNS = ['refine', 'remotion', 'staging'];
+const FOCUS_WORDS = { motion: 'adding motion', refine: 'refining looks', remotion: 'refining motion', staging: 'refining staging' };
+const focusWords = (f) => FOCUS_WORDS[f] || `improving ${f}`;
+const ALLOWED = { motion: ['obj', 'act', 'count'], refine: ['obj', 'drop'], remotion: ['obj', 'act', 'count', 'cut'], staging: ['obj', 'env', 'shot', 'drop'] };
 // Once the first round has filled the scene in, one pass choreographs it: what moves, in what order, to tell the paragraph.
 // A scene that was drawn with motion already has it; this is for scenes that came out still.
-const needsMotion = (sc) => ((sc.round || 0) >= 1 || !S.improve) && !sc.motionTried && !sc.lines.some((l) => l.t === 'act' || l.step);
+const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines.some((l) => l.t === 'act' || l.step);
 let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
@@ -752,30 +762,31 @@ function nextToImprove() {
   // Motion the writer asked for goes first, whatever the switches say.
   const asap = [...S.scenes.values()].find((sc) => (sc.wantMotion || sc.wantImprove) && sc.status === 'done' && sc.lines.length);
   if (asap) return asap;
-  if (S.paused || (!S.improve && !S.auto.motion) || document.hidden) return null;
+  if (S.paused || !S.improve || document.hidden) return null;
   // Improvement passes share the queue with everything else, so they wait until nothing the writer asked for is in it.
   const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
   if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
   const ready = order.map((i) => activeFor(i)).filter((sc) => sc && sc.status === 'done' && sc.lines.length && !sc.impError);
-  const first = ready.find((sc) => (S.improve && (sc.round || 0) < PLAN.length) || (S.auto.motion && needsMotion(sc)));
-  if (first || !S.improve) return first || null;
+  const first = ready.find((sc) => (sc.round || 0) < PLAN.length || needsMotion(sc));
+  if (first) return first;
   // Every scene has had its passes. Improving never stops: it goes round the scenes, the one on screen first,
   // refining whichever has had the fewest turns.
   return ready.slice().sort((a, b) => (a.refined || 0) - (b.refined || 0))[0] || null;
 }
 async function improveRound(sc) {
   improving = sc; sc.imps = [];
-  const round = sc.round || 0, motion = sc.wantMotion || (!sc.wantImprove && S.auto.motion && needsMotion(sc));
+  const round = sc.round || 0, motion = sc.wantMotion || (!sc.wantImprove && needsMotion(sc));
   // Two things asked for by hand on one scene run one after the other, each with its own direction.
   const note = (motion ? sc.noteMotion : sc.noteImprove) || '';
   if (motion) { sc.wantMotion = false; sc.noteMotion = ''; } else { sc.wantImprove = false; sc.noteImprove = ''; }
+  // After the first passes, improving goes on in turns: how things look, how they move, how the scene is staged.
   const refine = !motion && round >= PLAN.length;
-  const results = await Promise.all((motion ? ['motion'] : refine ? ['refine'] : PLAN[round]).map((focus) => improveOnce(sc, focus, note)));
+  const results = await Promise.all((motion ? ['motion'] : refine ? [TURNS[(sc.refined || 0) % TURNS.length]] : PLAN[round]).map((focus) => improveOnce(sc, focus, note)));
   sc.imps = null; improving = null;
   if (results.includes('aborted')) return;
   if (results.every((r) => r === 'error')) sc.impError = true;
-  else if (refine) { sc.refined = (sc.refined || 0) + 1; inspSig = ''; if (results[0] > 0) markDirty(`Scene ${sc.idx + 1} refined`); }
+  else if (refine) { const what = TURNS[(sc.refined || 0) % TURNS.length]; sc.refined = (sc.refined || 0) + 1; inspSig = ''; if (results[0] > 0) markDirty(`Scene ${sc.idx + 1}: ${focusWords(what)}`); }
   else if (motion) { sc.motionTried = true; inspSig = ''; markDirty(results[0] > 0 ? `Scene ${sc.idx + 1} animated` : 'Edited'); }
   // A round that changed nothing means Kimi has nothing left to add.
   else { const added = results.some((r) => r > 0); sc.round = added ? round + 1 : PLAN.length; markDirty(added ? `Scene ${sc.idx + 1} improved (${PLAN[round].join(', ')})` : 'Edited'); }
@@ -791,18 +802,19 @@ async function improveOnce(sc, focus, note = '') {
     mode: S.pack.visual, strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'), paragraph: sc.text,
     // A refining pass must be a new answer each time; a replay from the cache would change nothing.
-    improve: true, focus, fresh: focus === 'refine' || Boolean(note), guide: note, scene: sc.raw.join('\n'),
+    improve: true, focus, fresh: TURNS.includes(focus) || Boolean(note), guide: note, scene: sc.raw.join('\n'),
   };
   try {
     await sse('/api/scene', body, imp.ctrl.signal, (ev) => {
       if (ev.type === 'prompt') imp.prompt = ev.text;
       else if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
-        const o = parseLine(ev.raw); if (!o || !(focus === 'motion' ? ['obj', 'act', 'count'] : focus === 'refine' ? ['obj', 'act', 'count', 'drop'] : ['obj', 'many', 'env']).includes(o.t)) return;
+        let o = parseLine(ev.raw); if (!o || !(ALLOWED[focus] || ['obj', 'many', 'env']).includes(o.t)) return;
         // Refining may redraw what is there, never add: the scene must not grow without end.
-        if (focus === 'refine' && o.t === 'obj' && !had.has(String(o.id))) return;
+        if ((focus === 'refine' || focus === 'staging') && o.t === 'obj' && !had.has(String(o.id))) return;
+        if (o.t === 'shot') { const old = sc.lines.find((l) => l.t === 'shot'); if (!old) return; o = { ...old, cam: o.cam || old.cam }; }
         if (o.t === 'act') for (const f of ['id', 'of', 'from', 'to']) if (renamed.has(String(o[f]))) o[f] = renamed.get(String(o[f]));
-        if (o.t === 'env') { if (focus !== 'setting') return; delete o.title; }
+        if (o.t === 'env') { if (focus !== 'setting' && focus !== 'staging') return; delete o.title; }
         else if (o.t === 'obj' && o.id != null && !had.has(String(o.id))) { const id = `${focus}_${o.id}`; renamed.set(String(o.id), id); o.id = id; }
         else if (o.t === 'many' && renamed.has(String(o.of))) o.of = renamed.get(String(o.of));
         imp.chars += ev.raw.length; imp.n++; applyLine(sc, o);
@@ -861,8 +873,8 @@ function tick() {
     if (sc.cached) small = 'replaying'; else { big = `≈${Math.round(sc.chars / 1.85 / secs)}`; small = 'tokens/s'; }
   } else if (sc?.status === 'done' && sc.imps?.some((i) => i.status !== 'over')) {
     const gen = sc.imps.find((i) => i.status === 'gen'), waiting = sc.imps.filter((i) => i.status === 'wait');
-    if (gen) { cls = 'gen'; const secs = Math.max(0.05, (performance.now() - gen.genStart) / 1000); if (!gen.cached) big = `≈${Math.round(gen.chars / 1.85 / secs)}`; small = `${gen.cached ? '' : 'tokens/s · '}${gen.focus === 'refine' ? 'refining' : 'adding ' + gen.focus}`; }
-    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · ${waiting[0]?.focus === 'motion' ? 'adding motion' : waiting[0]?.focus === 'refine' ? 'refining' : `improving (${waiting.map((i) => i.focus).join(', ')})`}`; }
+    if (gen) { cls = 'gen'; const secs = Math.max(0.05, (performance.now() - gen.genStart) / 1000); if (!gen.cached) big = `≈${Math.round(gen.chars / 1.85 / secs)}`; small = `${gen.cached ? '' : 'tokens/s · '}${focusWords(gen.focus)}`; }
+    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · ${waiting.length === 1 ? focusWords(waiting[0].focus) : `improving (${waiting.map((i) => i.focus).join(', ')})`}`; }
   } else if (sc?.status === 'done' && sc.done) {
     if (sc.cached) small = 'replayed from cache';
     else { big = `≈${sc.done.tps}`; small = `tokens/s · ${(sc.done.genMs / 1000).toFixed(1)}s`; tip = `${sc.lines.length} lines in ${(sc.done.genMs / 1000).toFixed(1)}s after ${(sc.done.waitMs / 1000).toFixed(0)}s in the queue`; }
@@ -1274,7 +1286,7 @@ function verLine(v, i) {
   const bits = [new Date(v.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })];
   if (v.words >= 0) bits.push(`${v.words} word${v.words === 1 ? '' : 's'}`, `${v.scenes} drawing${v.scenes === 1 ? '' : 's'}`);
   return `<div class="ver" data-rev="${esc(v.rev)}"><div class="ver-head"><div><b>${esc(v.label)}</b><small>${i ? '' : 'Current · '}${esc(bits.join(' · '))}</small></div>`
-    + `<button class="mini" data-act="view">View</button>${i ? '<button class="mini" data-act="restore">Restore</button>' : ''}</div><pre hidden></pre></div>`;
+    + `<button class="mini" data-act="view">View</button><button class="mini" data-act="fork" title="Start a new project from this version">Fork</button>${i ? '<button class="mini" data-act="restore">Restore</button>' : ''}</div><pre hidden></pre></div>`;
 }
 async function showHistory() {
   if (!S.project) return;
@@ -1292,8 +1304,17 @@ $('#history').addEventListener('click', async (e) => {
   if (b.dataset.act === 'view' && !pre.hidden) { pre.hidden = true; b.textContent = 'View'; return; }
   const v = await api('GET', `/api/projects/${S.project.id}/versions/${row.dataset.rev}`);
   if (b.dataset.act === 'view') { pre.textContent = v.text || '(empty)'; pre.hidden = false; b.textContent = 'Hide'; return; }
+  const when = row.querySelector('small').textContent.replace(/^Current · /, '').split(' · ')[0];
+  if (b.dataset.act === 'fork') {
+    // The fork is a project of its own, starting at this version; the one it came from is left as it is.
+    await saveNow(); await saveChain;
+    const from = S.project.name, now = Date.now();
+    const copy = { ...v, id: newId(), name: (from + ' fork').slice(0, 80), createdAt: now, updatedAt: now };
+    await api('PUT', '/api/projects/' + copy.id, { ...copy, why: [`Forked from ${from}, ${when}`] });
+    loadProject(copy); refreshProjects(); setTab('history'); ta.focus();
+    return;
+  }
   await saveNow();
-  const when = row.querySelector('small').textContent.split(' · ')[0];
   loadProject({ ...v, id: S.project.id, createdAt: S.project.createdAt });
   markDirty(`Restored the version from ${when}`); await saveNow();
   ta.focus();

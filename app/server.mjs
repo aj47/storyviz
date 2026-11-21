@@ -468,7 +468,7 @@ function sceneRequest(b) {
   if (b.caption) parts.push(`on-screen text set by the writer (use exactly this as the shot line's "text"):\n"""\n${String(b.caption).slice(0, 60)}\n"""`);
   if (b.guide) parts.push(`direction from the writer:\n"""\n${String(b.guide).slice(0, 300)}\n"""`);
   if (b.improve) {
-    parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish', 'motion', 'refine'].includes(b.focus) ? b.focus : 'polish'}`);
+    parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish', 'motion', 'refine', 'remotion', 'staging'].includes(b.focus) ? b.focus : 'polish'}`);
     parts.push(`scene on screen now:\n${String(b.scene || '').slice(0, 24000)}`);
   }
   return parts.join('\n\n');
