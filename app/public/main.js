@@ -445,7 +445,7 @@ function tick() {
 
   const runs = [...S.coach.runs.values()];
   const waiting = runs.filter((r) => r.status === 'wait');
-  $('#coachStatus').textContent = runs.some((r) => r.status === 'gen') ? 'reading…'
+  $('#coachStatus').textContent = runs.some((r) => r.phase === 'facts') ? 'checking facts on Wikipedia…' : runs.some((r) => r.status === 'gen') ? 'reading…'
     : waiting.length ? `in queue ${Math.round((performance.now() - Math.min(...waiting.map((r) => r.t0))) / 1000)}s` : '';
   $('#reviewBtn').disabled = runs.length > 0 || ta.value.trim().length < 3;
   $('#redrawBtn').disabled = !S.shown?.lines.length || Boolean(act && flying(act));
@@ -471,11 +471,12 @@ $('#moreTips').onclick = () => { S.coach.allTips = true; layoutTips(); renderBac
 
 // Counts, empty messages and the Review button: everything in the coach that is derived from state.
 function renderCoach() {
-  const c = S.coach; const tips = $('#tips').children.length, ideas = $('#asks').children.length + $('#next').children.length;
+  const c = S.coach; const tips = $('#tips').children.length, ideas = $('#asks').children.length + $('#next').children.length + $('#details').children.length;
   const stages = S.pack?.structure?.stages || []; const done = stages.filter((g) => c.states[g.id]?.state === 'done').length;
   $('#tipsCount').textContent = tips || ''; $('#ideasCount').textContent = ideas || '';
   $('#stagesCount').textContent = stages.length && c.shownSeq ? `${done}/${stages.length}` : '';
   $('#reviewBtn').hidden = S.live;
+  $('#detailsWrap').hidden = !$('#details').children.length;
   $('#goodWrap').hidden = !$('#good').children.length; $('#asksWrap').hidden = !$('#asks').children.length; $('#nextWrap').hidden = !$('#next').children.length;
   $('#ideasEmpty').hidden = ideas > 0;
   const empty = $('#tipsEmpty'); empty.hidden = tips > 0 || $('#good').children.length > 0;
@@ -488,7 +489,7 @@ function renderCoach() {
 function resetCoach() {
   const c = S.coach; c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear();
   Object.assign(c, { tips: [], good: [], hot: null, shownSeq: 0, states: {}, saved: null, allTips: false });
-  for (const id of ['scores', 'verdict', 'tips', 'good', 'asks', 'next']) $('#' + id).innerHTML = '';
+  for (const id of ['scores', 'verdict', 'tips', 'good', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
   $('#scores').hidden = true; $('#verdict').hidden = true; layoutTips();
   $('#structureName').textContent = S.pack?.structure?.name || 'Structure';
   renderStages(); setTab('tips'); renderCoach();
@@ -496,7 +497,7 @@ function resetCoach() {
 function restoreCoach(saved) {
   if (!saved || saved.pack !== S.pack.id || !Array.isArray(saved.lines)) return;
   const c = S.coach; const run = { seq: ++c.seq, pack: saved.pack };
-  for (const o of saved.lines) { if (o.k === 'tip' && findQuote(ta.value, o.quote) < 0) continue; coachLine(run, o); }
+  for (const o of saved.lines) { if ((o.k === 'tip' || o.k === 'fact') && findQuote(ta.value, o.quote) < 0) continue; coachLine(run, o); }
   c.shownSeq = run.seq; c.saved = saved; renderCoach();
 }
 function renderStages() {
@@ -525,6 +526,7 @@ async function runCoach(force = false) {
   try {
     await sse('/api/coach', { pack: S.pack.id, text, fresh: Boolean(reviewed) }, run.ctrl.signal, (ev) => {
       if (ev.type === 'first') run.status = 'gen';
+      else if (ev.type === 'phase') run.phase = ev.name;
       else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o) { run.lines.push(o); coachLine(run, o); } }
       else if (ev.type === 'done') run.status = 'done';
       else if (ev.type === 'error') run.status = 'error';
@@ -541,30 +543,39 @@ function coachLine(run, o) {
   const c = S.coach; if (run.pack !== S.pack.id || run.seq < c.shownSeq) return;
   if (run.seq > c.shownSeq) {
     c.shownSeq = run.seq; c.tips = []; c.good = []; c.hot = null; c.allTips = false;
-    for (const id of ['tips', 'good', 'asks', 'next']) $('#' + id).innerHTML = '';
+    for (const id of ['tips', 'good', 'asks', 'next', 'details']) $('#' + id).innerHTML = '';
   }
   const rule = S.pack.rules.find((r) => r.id === o.rule); const src = rule && S.pack.sources.find((s) => s.id === rule.source);
-  const from = rule ? `<b>${esc(rule.name)}</b>${src ? ' · ' + (src.url ? `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.title)}</a>` : esc(src.title)) : ''}` : '';
+  const link = (url, text, title = '') => (url ? `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(title)}">${esc(text)}</a>` : `<span title="${esc(title)}">${esc(text)}</span>`);
+  const wiki = o.url ? link(o.url, 'Wikipedia', o.title || '') : '';
   const hover = (el) => { el.onmouseenter = () => { c.hot = o; renderBackdrop(); }; el.onmouseleave = () => { c.hot = null; renderBackdrop(); }; };
-  if (o.k === 'tip' && o.tip) {
+  // One card shape for coach tips and failed fact checks: what to do, the rewrite, where it comes from.
+  const card = (text, from, cls = '') => {
     c.tips.push(o);
-    const el = document.createElement('div'); el.className = 'card' + (findQuote(ta.value, o.quote) < 0 ? ' stale' : '');
-    const swap = o.quote ? `<div class="swap"><del title="Show in the text">${esc(o.quote)}</del>${o.fix ? `<ins>${esc(o.fix)}</ins>` : ''}</div>` : '';
-    el.innerHTML = `<div class="tip">${esc(o.tip)}</div>${swap}<div class="foot"><span class="rule">${from}</span>${o.fix && o.quote ? '<button>Apply</button>' : ''}</div>`;
+    const el = document.createElement('div'); el.className = `card ${cls}` + (findQuote(ta.value, o.quote) < 0 ? ' stale' : '');
+    const canFix = Boolean(o.fix && o.quote);
+    el.innerHTML = `<div class="tip">${esc(text)}</div>${canFix ? `<div class="fix">${esc(o.fix)}</div>` : ''}<div class="foot"><span class="rule">${from}</span>${canFix ? '<button>Apply</button>' : ''}</div>`;
     hover(el); tipEls.set(o, el);
-    el.querySelector('del')?.addEventListener('click', () => selectQuote(o.quote));
+    el.addEventListener('click', (e) => { if (!e.target.closest('a, button')) selectQuote(o.quote); });
     el.querySelector('.foot button')?.addEventListener('click', () => { el.remove(); layoutTips(); applyFix(o); });
-    $('#tips').appendChild(el); layoutTips(); renderBackdrop();
-  } else if (o.k === 'good' && o.note) {
-    c.good.push(o);
-    const el = document.createElement('div'); el.className = 'goodline';
-    el.innerHTML = `${esc(o.note)}${o.quote ? ` <q>${esc(o.quote)}</q>` : ''}`; hover(el);
-    $('#good').appendChild(el);
+    if (cls) $('#tips').prepend(el); else $('#tips').appendChild(el);
+    layoutTips(); renderBackdrop();
+  };
+  const goodLine = (html) => { c.good.push(o); const el = document.createElement('div'); el.className = 'goodline'; el.innerHTML = html; hover(el); $('#good').appendChild(el); };
+  if (o.k === 'tip' && o.tip) card(o.tip, rule ? `<b>${link(src?.url, rule.name, src?.title)}</b>` : '');
+  else if (o.k === 'good' && o.note) goodLine(esc(o.note));
+  else if (o.k === 'fact' && o.note && o.verdict === 'true') goodLine(`Checks out: ${esc(o.note)} ${wiki}`);
+  else if (o.k === 'fact' && o.note) card(o.note, `<b>${o.verdict === 'false' ? 'Fact check' : 'Could not confirm'}</b>${wiki ? ' · ' + wiki : ''}`, 'fact');
+  else if (o.k === 'detail' && o.text) {
+    const el = document.createElement('div'); el.className = 'detail';
+    el.innerHTML = `<button class="line">${esc(o.text)}</button>${wiki ? `<span class="src">${wiki}</span>` : ''}`;
+    el.querySelector('button').onclick = () => { addLine(o.text); el.remove(); renderCoach(); };
+    $('#details').appendChild(el);
   } else if (o.k === 'stage' && o.id) { c.states[o.id] = o; renderStages(); }
   else if (o.k === 'ask' && o.text) { const el = document.createElement('div'); el.className = 'line'; el.textContent = o.text; $('#asks').appendChild(el); }
   else if (o.k === 'next' && o.text) {
     const el = document.createElement('button'); el.className = 'line'; el.textContent = o.text;
-    el.onclick = () => { const v = ta.value.replace(/\s+$/, ''); ta.value = v + (v ? ' ' : '') + o.text; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); el.remove(); onText(); };
+    el.onclick = () => { addLine(o.text); el.remove(); renderCoach(); };
     $('#next').appendChild(el);
   } else if (o.k === 'score') {
     const cell = (n, l) => { const v = Math.max(0, Math.min(100, Math.round(Number(n) || 0))); return `<div class="score">${l}<b>${v}</b><div class="bar"><i style="width:${v}%"></i></div></div>`; };
@@ -573,6 +584,7 @@ function coachLine(run, o) {
   }
   renderCoach();
 }
+function addLine(text) { const v = ta.value.replace(/\s+$/, ''); ta.value = v + (v ? ' ' : '') + text; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); onText(); }
 function selectQuote(q) { const i = findQuote(ta.value, q); if (i < 0) return; ta.focus(); ta.setSelectionRange(i, i + q.length); moved(true); }
 function applyFix(o) {
   const i = findQuote(ta.value, o.quote); if (i < 0) return;

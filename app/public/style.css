@@ -141,14 +141,19 @@ main { height: calc(100% - 48px); display: grid; grid-template-columns: minmax(3
 .card { background: var(--raise); border-radius: 12px; padding: 12px 13px; margin-bottom: 8px; animation: in .25s ease-out; }
 .card.stale { opacity: .4; }
 @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.card .tip { font-size: 13.5px; line-height: 1.45; }
-.card .swap { margin-top: 9px; font-family: var(--serif); font-size: 13.5px; line-height: 1.45; }
-.card .swap del { display: block; color: var(--muted); cursor: pointer; text-decoration-color: rgba(255, 107, 107, .6); }
-.card .swap ins { display: block; margin-top: 3px; color: #dff5e7; text-decoration: none; }
-.card .foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.card .tip { font-size: 13.5px; line-height: 1.4; font-weight: 550; }
+.card { cursor: pointer; }
+.card .fix { margin-top: 7px; font-family: var(--serif); font-size: 14px; line-height: 1.45; color: #bfe9cf; }
+.card.fact .rule b { color: var(--blue); }
+.goodline a, .src, .src a { color: var(--muted); font-size: 11.5px; }
+.detail { margin-bottom: 10px; }
+.detail .line { margin-bottom: 3px; }
+.detail .src { display: block; padding-left: 11px; }
+.card .foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .card .rule { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); line-height: 1.35; }
 .card .rule b { color: var(--accent); font-weight: 600; }
-.card .rule a { color: inherit; }
+.card .rule a { color: inherit; text-decoration: none; }
+.card .rule a:hover { text-decoration: underline; }
 .card .foot button { flex: none; background: var(--good); color: #05210f; font-weight: 700; font-size: 12px; border-radius: 7px; padding: 5px 11px; }
 .goodline { font-size: 13px; line-height: 1.45; padding: 4px 0 4px 12px; border-left: 2px solid var(--good); margin-bottom: 8px; cursor: default; }
 .goodline q { font-family: var(--serif); color: var(--muted); }

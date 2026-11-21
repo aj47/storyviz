@@ -90,34 +90,46 @@ function readBody(req, limit = 400_000) {
   });
 }
 
-// Stream one agent turn from the OpenClaw gateway and forward complete lines as SSE.
-async function streamAgent(req, res, agent, userText, maxTokens, charsPerToken, useCache = true) {
+function openStream(res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive', 'X-Accel-Buffering': 'no',
   });
-  const send = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
+  return (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
+}
+
+// An agent's instructions are part of the cache key, so editing a prompt never replays answers written under the old one.
+const promptHash = (agent) => {
+  try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(ROOT, 'agents', `${agent}.AGENTS.md`))).digest('hex').slice(0, 10); }
+  catch { return ''; }
+};
+
+// Run one agent turn through the OpenClaw gateway and forward complete lines as SSE events.
+// `shape` can rewrite a line before it is sent, or return null to keep it from the page.
+// Returns { lines, done } (the caller sends `done` and ends the response), or null after an error.
+async function runAgent(res, send, agent, userText, { maxTokens = 6000, charsPerToken = 3.4, useCache = true, shape = (l) => l } = {}) {
+  const forward = (line, ms) => { const out = shape(line); if (out) send({ type: 'line', raw: out, ms }); };
   // Identical requests replay from disk, clearly marked as cached, so reloads and retakes are instant.
-  const cacheFile = path.join(CACHE, crypto.createHash('sha1').update(agent + '\n' + userText).digest('hex') + '.json');
+  const cacheFile = path.join(CACHE, crypto.createHash('sha1').update(agent + promptHash(agent) + '\n' + userText).digest('hex') + '.json');
   if (useCache && fs.existsSync(cacheFile)) {
     try {
       const c = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
       send({ type: 'first', waitMs: 0, cached: true });
-      for (const raw of c.lines) { send({ type: 'line', raw, ms: 0 }); await new Promise((r) => setTimeout(r, 25)); }
-      send({ ...c.done, cached: true }); res.end(); return;
+      for (const raw of c.lines) { forward(raw, 0); await new Promise((r) => setTimeout(r, 25)); }
+      return { lines: c.lines, done: { ...c.done, cached: true } };
     } catch { /* fall through to a live run */ }
   }
   const kept = [];
   const ac = new AbortController();
-  res.on('close', () => ac.abort());
+  const onClose = () => ac.abort();
+  res.on('close', onClose);
   const t0 = Date.now();
-  let first = 0, chars = 0, buf = '', lines = 0, usage = null;
+  let first = 0, chars = 0, buf = '', usage = null;
   const beat = setInterval(() => { if (!first) send({ type: 'wait', ms: Date.now() - t0 }); }, 1000);
   const emitLine = (line) => {
     line = line.trim();
     if (!line || line.startsWith('```')) return;
-    lines++; kept.push(line);
-    send({ type: 'line', raw: line, ms: Date.now() - t0 });
+    kept.push(line); forward(line, Date.now() - t0);
   };
   try {
     const up = await fetch(`${GATEWAY}/v1/chat/completions`, {
@@ -158,18 +170,80 @@ async function streamAgent(req, res, agent, userText, maxTokens, charsPerToken, 
     const tokens = Math.round(chars / charsPerToken);
     const total = usage?.completion_tokens || 0;
     const done = {
-      type: 'done', waitMs: first ? first - t0 : Date.now() - t0, genMs, chars, lines, tokens, totalTokens: total,
+      type: 'done', waitMs: first ? first - t0 : Date.now() - t0, genMs, chars, lines: kept.length, tokens, totalTokens: total,
       tps: genMs > 0 ? Math.round(tokens / (genMs / 1000)) : 0,
     };
-    send(done);
     const cutOff = total >= maxTokens * 0.98;
-    if (lines >= 2 && !cutOff) fs.writeFile(cacheFile, JSON.stringify({ agent, lines: kept, done }), () => {});
+    if (kept.length >= 2 && !cutOff) fs.writeFile(cacheFile, JSON.stringify({ agent, lines: kept, done }), () => {});
+    return { lines: kept, done };
   } catch (e) {
     if (!ac.signal.aborted) send({ type: 'error', message: String(e.message || e) });
+    return null;
   } finally {
-    clearInterval(beat);
-    res.end();
+    clearInterval(beat); res.off('close', onClose);
   }
+}
+
+const parseLine = (raw) => { try { return JSON.parse(String(raw).trim().replace(/,\s*$/, '')); } catch { return null; } };
+
+// ---------- fact lookup ----------
+// The coach names the claims worth checking. The server looks each one up on Wikipedia (a plain
+// web request, not a model call) and hands the extracts back to Kimi to judge.
+async function wiki(params) {
+  const res = await fetch('https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ format: 'json', ...params }), {
+    headers: { 'User-Agent': 'storyviz/1.0 (writing tool; fact lookup)' }, signal: AbortSignal.timeout(7000),
+  });
+  if (!res.ok) throw new Error('wikipedia ' + res.status);
+  return res.json();
+}
+async function research(checks) {
+  const hits = await Promise.all(checks.map(async (c) => {
+    try {
+      const j = await wiki({ action: 'query', list: 'search', srsearch: String(c.query).slice(0, 120), srlimit: '3' });
+      return (j.query?.search || []).map((h) => h.title);
+    } catch (e) { console.error('search failed', c.query, e.message); return []; }
+  }));
+  // Take every claim's best hit before anyone's second, so one claim cannot use up all the source slots.
+  const titles = [];
+  for (let rank = 0; rank < 3; rank++) for (const list of hits) if (list[rank] && !titles.includes(list[rank])) titles.push(list[rank]);
+  const pages = await Promise.all(titles.slice(0, 6).map(async (title) => {
+    try {
+      const j = await wiki({ action: 'query', prop: 'extracts', explaintext: '1', exchars: '2200', redirects: '1', titles: title });
+      const page = Object.values(j.query?.pages || {})[0];
+      const text = String(page?.extract || '').replace(/\n{2,}/g, '\n').trim();
+      return text.length > 80 ? { title: page.title, url: 'https://en.wikipedia.org/wiki/' + encodeURIComponent(page.title.replace(/ /g, '_')), text } : null;
+    } catch (e) { console.error('extract failed', title, e.message); return null; }
+  }));
+  return pages.filter(Boolean);
+}
+function factRequest(pack, text, checks, sources) {
+  return [
+    'mode: fact check', `writing type: ${pack.name}`,
+    `draft:\n"""\n${String(text).slice(0, 9000)}\n"""`,
+    `claims to check:\n${checks.map((c) => JSON.stringify({ quote: c.quote })).join('\n')}`,
+    `sources:\n${sources.map((s, i) => `[${i + 1}] ${s.title}\n${s.text}`).join('\n\n')}`,
+  ].join('\n\n');
+}
+
+async function streamCoach(res, pack, text, useCache) {
+  const send = openStream(res);
+  // "check" lines are instructions for the server, so they are not shown on the page.
+  const coach = await runAgent(res, send, 'coach', coachRequest(pack, text), { useCache, shape: (l) => (parseLine(l)?.k === 'check' ? null : l) });
+  if (!coach) { res.end(); return; }
+  const checks = coach.lines.map(parseLine).filter((o) => o?.k === 'check' && o.query && o.quote).slice(0, 3);
+  if (checks.length && !res.destroyed) {
+    send({ type: 'phase', name: 'facts' });
+    const sources = await research(checks);
+    // Kimi cites a source by number; the page gets its title and link instead.
+    const cite = (l) => {
+      const o = parseLine(l); if (!o || (o.k !== 'fact' && o.k !== 'detail')) return null;
+      const s = sources[Number(o.src) - 1]; delete o.src;
+      if (!s && (o.k === 'detail' || o.verdict !== 'unclear')) return null;
+      return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
+    };
+    if (sources.length && !res.destroyed) await runAgent(res, send, 'coach', factRequest(pack, text, checks, sources), { maxTokens: 3000, useCache, shape: cite });
+  }
+  send(coach.done); res.end();
 }
 
 function sceneRequest(b) {
@@ -186,9 +260,10 @@ function sceneRequest(b) {
 function coachRequest(pack, text) {
   const slim = {
     type: pack.name,
+    factual: Boolean(pack.factual),
+    accepted_shapes: pack.shapes,
     structure: pack.structure,
-    sources: pack.sources.map((s) => ({ id: s.id, title: s.title })),
-    rules: pack.rules.map((r) => ({ id: r.id, name: r.name, rule: r.rule, look_for: r.look_for })),
+    rules: pack.rules.map((r) => ({ id: r.id, name: r.name, rule: r.rule, look_for: r.look_for, not_a_problem: r.ok, bad: r.bad, good: r.good })),
   };
   return `guide pack:\n${JSON.stringify(slim)}\n\ndraft:\n"""\n${String(text).slice(0, 9000)}\n"""`;
 }
@@ -216,13 +291,16 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/api/scene') {
       const b = await readBody(req);
-      return streamAgent(req, res, 'illustrator', sceneRequest(b), 6000, 1.85, !b.fresh);
+      const send = openStream(res);
+      const r = await runAgent(res, send, 'illustrator', sceneRequest(b), { charsPerToken: 1.85, useCache: !b.fresh });
+      if (r) send(r.done);
+      res.end(); return;
     }
     if (req.method === 'POST' && url.pathname === '/api/coach') {
       const b = await readBody(req);
       const pack = loadPacks().find((p) => p.id === b.pack);
       if (!pack) { res.writeHead(400); res.end('unknown pack'); return; }
-      return streamAgent(req, res, 'coach', coachRequest(pack, b.text || ''), 6000, 3.4, !b.fresh);
+      return streamCoach(res, pack, b.text || '', !b.fresh);
     }
     if (req.method === 'GET') {
       if (url.pathname.startsWith('/vendor/three/')) {

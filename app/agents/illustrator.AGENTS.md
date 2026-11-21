@@ -27,11 +27,11 @@ obj — one thing built from primitives:
 many — repeat an earlier obj cheaply, for forests, crowds, rows of things:
 {"t":"many","of":"tree","at":[[x,z,scale,ry],[x,z,scale,ry]]}
 
-label — floating text, used sparingly:
-{"t":"label","at":[x,y,z],"text":"max 4 words"}
+label — floating text. At most one per scene, and none in storyboard mode (the shot caption is the text):
+{"t":"label","at":[x,y,z],"text":"max 3 words"}
 
 gap — something the writing does not let you draw:
-{"t":"gap","at":[x,z],"text":"max 6 words naming what is missing"}
+{"t":"gap","at":[x,z],"text":"max 3 words naming what is missing"}
 
 ## Modes
 
@@ -40,7 +40,7 @@ The request names a mode.
 diorama — a story scene. env first, then the main character or subject, then what they interact with, then setting, then background. 8 to 20 obj/many lines.
 
 storyboard — the paragraph is one beat of a short vertical video script. After env, output exactly one shot line, then draw what the viewer would see during that beat, framed for a tall phone screen (keep everything within x -4..4):
-{"t":"shot","beat":"hook|setup|proof|payoff|cta","cam":"wide|medium|close|low|top","sec":4,"text":"on-screen caption, max 6 words"}
+{"t":"shot","beat":"hook|setup|proof|payoff|cta","cam":"wide|medium|close|low|top","sec":4,"text":"on-screen caption, max 5 words"}
 sec is how long the beat takes to say out loud at about 2.6 words a second. If the beat is a person talking to camera, draw the presenter and the thing they are talking about. 5 to 12 obj lines.
 
 diagram — the paragraph is engineering documentation. Do not draw scenery. After env (use "light":"indoor"), output nodes on a grid and edges between them:
@@ -55,7 +55,7 @@ diagram — the paragraph is engineering documentation. Do not draw scenery. Aft
 
 Draw what the paragraph states or clearly implies. The scene is feedback on the writing, so it must show how much the writer actually gave you.
 
-- strict yes: do not invent. Things the paragraph names and describes (colour, size, material, shape, action) get full colour, detail and animation. Things it names without describing get "ghost":true and at most 5 parts. If the paragraph has no concrete place, thing or action, output env with a grey sky and ground, at most one ghost figure, and one or two gap lines saying what a reader cannot picture.
+- strict yes: do not invent. Things the paragraph names and describes (colour, size, material, shape, action) get full colour, detail and animation. Things it names without describing get "ghost":true and at most 5 parts. If the paragraph has no concrete place, thing or action, output env with a grey sky and ground, at most one ghost figure, and one gap line saying what a reader cannot picture.
 - strict no: imagine freely. Fill in a fitting setting, colours and background details, but keep everything the paragraph mentions.
 
 ## Colour

@@ -1,274 +1,291 @@
 {
-  "id": "engineering-docs",
-  "name": "Engineering docs",
-  "blurb": "Technical docs for a software system: tutorials, how-to guides, reference, explanation.",
-  "visual": "diagram",
-  "placeholder": "There is an API that receives orders from the web client and saves them in the Postgres database. The API then puts a message on the queue. The worker reads the message and the consumer sends a confirmation email, and then it updates it.\n\nTo set up the service, the user should first clone the repo, then run `make dev`, and after that check the DLQ. Restart the worker if the queue is stuck.",
-  "structure": {
-    "name": "Diátaxis",
-    "source": "diataxis",
-    "stages": [
-      {"id": "tutorial", "label": "Tutorial", "hint": "A lesson: the learner builds something step by step."},
-      {"id": "how-to", "label": "How-to guide", "hint": "Steps that solve one specific, real task."},
-      {"id": "reference", "label": "Reference", "hint": "Neutral facts: endpoints, options, limits, error codes."},
-      {"id": "explanation", "label": "Explanation", "hint": "Background and reasons: why the system works this way."}
-    ]
-  },
-  "sources": [
-    {
-      "id": "diataxis",
-      "title": "Diátaxis: a systematic approach to technical documentation authoring",
-      "author": "Daniele Procida",
-      "year": 2021,
-      "url": "https://diataxis.fr/"
-    },
-    {
-      "id": "google-tw1",
-      "title": "Technical Writing One",
-      "author": "Google",
-      "year": 2020,
-      "url": "https://developers.google.com/tech-writing/one"
-    },
-    {
-      "id": "google-style",
-      "title": "Google developer documentation style guide: Highlights",
-      "author": "Google",
-      "year": 2026,
-      "url": "https://developers.google.com/style/highlights"
-    },
-    {
-      "id": "ms-style",
-      "title": "Microsoft Writing Style Guide: Top 10 tips for Microsoft style and voice",
-      "author": "Microsoft",
-      "year": 2018,
-      "url": "https://learn.microsoft.com/en-us/style-guide/top-10-tips-style-voice"
-    }
-  ],
-  "rules": [
-    {
-      "id": "diataxis-one-type",
-      "source": "diataxis",
-      "name": "One doc, one type",
-      "rule": "Keep each document to one type: tutorial, how-to guide, reference or explanation. Link to the other types instead of mixing them in.",
-      "look_for": "Steps interrupted by paragraphs of background, design history or full option tables; reference pages containing procedures.",
-      "bad": "Run `make dev`. Historically we used Docker Compose because the original team preferred it, and before that Vagrant.",
-      "good": "Run `make dev`. For why the project uses Make, see About the build system."
-    },
-    {
-      "id": "diataxis-howto-title",
-      "source": "diataxis",
-      "name": "Title how-tos 'How to'",
-      "rule": "Title a how-to guide with exactly what it shows, in the form 'How to' plus the task.",
-      "look_for": "Procedural doc titled with a bare noun phrase or '-ing' phrase: 'Worker deployment', 'Deploying workers'.",
-      "bad": "Queue worker deployment",
-      "good": "How to deploy a queue worker"
-    },
-    {
-      "id": "diataxis-howto-goal",
-      "source": "diataxis",
-      "name": "Write for the user's goal",
-      "rule": "Build a how-to guide around a task the user needs done, not around a tool's features or buttons.",
-      "look_for": "Steps that only narrate obvious tool operations ('click Deploy to deploy') with no stated user goal.",
-      "bad": "To deploy the configuration, select the options and press Deploy.",
-      "good": "To keep failed orders for 14 days, set `retention_days: 14` on the dead-letter queue, then deploy."
-    },
-    {
-      "id": "diataxis-tutorial-goal",
-      "source": "diataxis",
-      "name": "Show the destination",
-      "rule": "Open a tutorial by saying what the learner will build or achieve.",
-      "look_for": "Tutorial begins with steps or concepts and never states the finished result up front.",
-      "bad": "Step 1: Install Redis.",
-      "good": "In this tutorial we will build an order API that queues confirmation emails. Step 1: Install Redis."
-    },
-    {
-      "id": "diataxis-tutorial-expected",
-      "source": "diataxis",
-      "name": "Show expected output",
-      "rule": "After each tutorial step, tell the learner what they should see, with example output where possible.",
-      "look_for": "A command or action with no following line that shows or describes the expected result.",
-      "bad": "Run `curl localhost:8080/health`.",
-      "good": "Run `curl localhost:8080/health`. The API responds with `{\"status\":\"ok\"}`."
-    },
-    {
-      "id": "diataxis-tutorial-one-path",
-      "source": "diataxis",
-      "name": "One path in tutorials",
-      "rule": "In a tutorial, give a single path to the goal; leave options and alternatives for other docs.",
-      "look_for": "'Alternatively', 'you could also', 'or, if you prefer' inside tutorial steps.",
-      "bad": "Install Postgres with Homebrew, or alternatively Docker, or you could also use a managed instance.",
-      "good": "Install Postgres with Homebrew."
-    },
-    {
-      "id": "diataxis-reference-neutral",
-      "source": "diataxis",
-      "name": "Reference only describes",
-      "rule": "In reference material, state facts about the system neutrally; leave out opinion, marketing and step-by-step instruction.",
-      "look_for": "Opinion or sales words in reference text ('powerful', 'easy', 'simply'), or procedures mixed into parameter descriptions.",
-      "bad": "`max_retries` is a powerful option you will love. First open the dashboard, then click Settings.",
-      "good": "`max_retries`: integer, default 3. Number of times the worker retries a failed job."
-    },
-    {
-      "id": "diataxis-explanation-why",
-      "source": "diataxis",
-      "name": "Explain the why",
-      "rule": "In explanation, give reasons and context: design decisions, constraints and the alternatives considered.",
-      "look_for": "Overview lists components but never says why they were chosen or what trade-offs they carry.",
-      "bad": "The system uses a queue between the API and the worker.",
-      "good": "The API puts emails on a queue so that a slow mail provider cannot delay order responses."
-    },
-    {
-      "id": "google-tw1-define-terms",
-      "source": "google-tw1",
-      "name": "Define new terms",
-      "rule": "Define each unfamiliar term or acronym where it first appears, or link to a definition.",
-      "look_for": "Acronym or project-specific term used with no definition or link on first use: 'the DLQ', 'the reaper'.",
-      "bad": "Failed jobs go to the DLQ.",
-      "good": "Failed jobs go to the dead-letter queue (DLQ), a queue that holds messages the worker could not process."
-    },
-    {
-      "id": "google-tw1-consistent-terms",
-      "source": "google-tw1",
-      "name": "One name per thing",
-      "rule": "After you name something, keep using that exact name.",
-      "look_for": "One component called by several names: 'worker', then 'consumer', then 'job runner'.",
-      "bad": "The worker reads the queue. The consumer then sends the email.",
-      "good": "The worker reads the queue. The worker then sends the email."
-    },
-    {
-      "id": "google-tw1-pronouns",
-      "source": "google-tw1",
-      "name": "No ambiguous pronouns",
-      "rule": "Replace any 'it', 'this', 'that' or 'they' that could point at more than one noun.",
-      "look_for": "A pronoun that follows two or more candidate nouns, so its referent is unclear.",
-      "bad": "The API sends the job to the queue, and it retries it if it fails.",
-      "good": "The API sends the job to the queue. If the job fails, the worker retries the job."
-    },
-    {
-      "id": "google-tw1-active",
-      "source": "google-tw1",
-      "name": "Prefer active voice",
-      "rule": "Write in active voice so the reader knows which component performs the action.",
-      "look_for": "'is', 'are' or 'was' plus a past participle with no actor: 'the job is retried', 'requests are validated'.",
-      "bad": "The order is written to the database.",
-      "good": "The API writes the order to the database."
-    },
-    {
-      "id": "google-tw1-there-is",
-      "source": "google-tw1",
-      "name": "Cut 'there is'",
-      "rule": "Rewrite sentences that start with 'there is' or 'there are' around a real subject and verb.",
-      "look_for": "Sentences beginning 'There is', 'There are' or 'There exists'.",
-      "bad": "There is a worker that processes the queue.",
-      "good": "A worker processes the queue."
-    },
-    {
-      "id": "google-tw1-one-idea",
-      "source": "google-tw1",
-      "name": "One idea per sentence",
-      "rule": "Limit each sentence to a single idea; split long ones or convert them to lists.",
-      "look_for": "Sentences with three or more clauses chained by 'and', 'which' or 'but', or running past about 30 words.",
-      "bad": "The API validates the order and writes it to Postgres, which triggers a message that the worker reads and then emails.",
-      "good": "The API validates the order and writes it to Postgres. The API then publishes a message. The worker reads the message and sends the email."
-    },
-    {
-      "id": "google-tw1-numbered",
-      "source": "google-tw1",
-      "name": "Number sequential steps",
-      "rule": "Put steps that must happen in order in a numbered list; use bullets only when order does not matter.",
-      "look_for": "Ordered steps written as a paragraph ('first… then… after that') or as bullet points.",
-      "bad": "First clone the repo, then run `make dev`, and after that open the dashboard.",
-      "good": "1. Clone the repo.\n2. Run `make dev`.\n3. Open the dashboard."
-    },
-    {
-      "id": "google-tw1-imperative",
-      "source": "google-tw1",
-      "name": "Start steps with verbs",
-      "rule": "Begin every numbered step with an imperative verb.",
-      "look_for": "Numbered steps starting with 'You should', 'The user', 'Next, the' or a noun.",
-      "bad": "1. The repo should be cloned by the user.",
-      "good": "1. Clone the repo."
-    },
-    {
-      "id": "google-tw1-scope",
-      "source": "google-tw1",
-      "name": "State scope and audience",
-      "rule": "Begin the document by stating what it covers, who it is for and its key points.",
-      "look_for": "Opening paragraph that does not say what the doc covers or who should read it.",
-      "bad": "Orders are important to our business.",
-      "good": "This guide shows backend engineers how to run the order service locally. It assumes you have Docker installed."
-    },
-    {
-      "id": "google-style-second-person",
-      "source": "google-style",
-      "name": "Address the reader as you",
-      "rule": "Write to the reader as 'you'; do not use 'we' or 'the user' for the reader's actions.",
-      "look_for": "'The user should', 'developers must', 'one can', or 'we' for actions the reader performs.",
-      "bad": "The user should set the API key.",
-      "good": "Set your API key."
-    },
-    {
-      "id": "google-style-conditions-first",
-      "source": "google-style",
-      "name": "Condition before instruction",
-      "rule": "Put the condition before the instruction it applies to.",
-      "look_for": "Instruction sentences that end in 'if…', 'when…' or 'unless…'.",
-      "bad": "Restart the worker if the queue is stuck.",
-      "good": "If the queue is stuck, restart the worker."
-    },
-    {
-      "id": "google-style-code-font",
-      "source": "google-style",
-      "name": "Code in code font",
-      "rule": "Format commands, file names, endpoints, field names and other code-related text as code.",
-      "look_for": "Commands, paths, endpoints or config keys in plain text or quotation marks instead of backticks.",
-      "bad": "Run make dev and open config.yaml.",
-      "good": "Run `make dev` and open `config.yaml`."
-    },
-    {
-      "id": "google-style-no-preannounce",
-      "source": "google-style",
-      "name": "Don't pre-announce",
-      "rule": "Document what exists now; leave out announcements of unreleased features.",
-      "look_for": "'Coming soon', 'will be supported in a future release', 'we plan to add'.",
-      "bad": "Batch refunds are coming soon.",
-      "good": "The API does not support batch refunds."
-    },
-    {
-      "id": "google-style-link-text",
-      "source": "google-style",
-      "name": "Descriptive link text",
-      "rule": "Write link text that describes the destination.",
-      "look_for": "Links labelled 'click here', 'here', 'this page', or a bare URL.",
-      "bad": "For queue settings, click [here](/reference/queue).",
-      "good": "See the [queue settings reference](/reference/queue)."
-    },
-    {
-      "id": "ms-style-point-first",
-      "source": "ms-style",
-      "name": "Lead with the point",
-      "rule": "Put the most important information first and front-load keywords so readers can scan.",
-      "look_for": "A document or section opening with history or preamble, with the key action or fact several sentences in.",
-      "bad": "Over the years many teams have asked about retries. After much discussion, we decided the worker retries three times.",
-      "good": "The worker retries a failed job three times."
-    },
-    {
-      "id": "ms-style-sentence-case",
-      "source": "ms-style",
-      "name": "Sentence-case headings",
-      "rule": "Capitalize only the first word and proper nouns in headings.",
-      "look_for": "Headings In Title Case: 'Getting Started With The Order Service'.",
-      "bad": "Getting Started With The Order Service",
-      "good": "Getting started with the order service"
-    },
-    {
-      "id": "ms-style-contractions",
-      "source": "ms-style",
-      "name": "Use contractions",
-      "rule": "Use common contractions such as it's, you'll and don't to keep a friendly, natural tone.",
-      "look_for": "'Do not', 'it is', 'you will', 'cannot' spelled out throughout where a contraction would read naturally.",
-      "bad": "You will not need a database for this step.",
-      "good": "You won't need a database for this step."
-    }
+ "id": "engineering-docs",
+ "name": "Engineering docs",
+ "blurb": "Technical docs for a software system: tutorials, how-to guides, reference, explanation.",
+ "visual": "diagram",
+ "placeholder": "There is an API that receives orders from the web client and saves them in the Postgres database. The API then puts a message on the queue. The worker reads the message and the consumer sends a confirmation email, and then it updates it.\n\nTo set up the service, the user should first clone the repo, then run `make dev`, and after that check the DLQ. Restart the worker if the queue is stuck.",
+ "structure": {
+  "name": "Diátaxis",
+  "source": "diataxis",
+  "stages": [
+   {
+    "id": "tutorial",
+    "label": "Tutorial",
+    "hint": "A lesson: the learner builds something step by step."
+   },
+   {
+    "id": "how-to",
+    "label": "How-to guide",
+    "hint": "Steps that solve one specific, real task."
+   },
+   {
+    "id": "reference",
+    "label": "Reference",
+    "hint": "Neutral facts: endpoints, options, limits, error codes."
+   },
+   {
+    "id": "explanation",
+    "label": "Explanation",
+    "hint": "Background and reasons: why the system works this way."
+   }
   ]
+ },
+ "sources": [
+  {
+   "id": "diataxis",
+   "title": "Diátaxis: a systematic approach to technical documentation authoring",
+   "author": "Daniele Procida",
+   "year": 2021,
+   "url": "https://diataxis.fr/"
+  },
+  {
+   "id": "google-tw1",
+   "title": "Technical Writing One",
+   "author": "Google",
+   "year": 2020,
+   "url": "https://developers.google.com/tech-writing/one"
+  },
+  {
+   "id": "google-style",
+   "title": "Google developer documentation style guide: Highlights",
+   "author": "Google",
+   "year": 2026,
+   "url": "https://developers.google.com/style/highlights"
+  },
+  {
+   "id": "ms-style",
+   "title": "Microsoft Writing Style Guide: Top 10 tips for Microsoft style and voice",
+   "author": "Microsoft",
+   "year": 2018,
+   "url": "https://learn.microsoft.com/en-us/style-guide/top-10-tips-style-voice"
+  }
+ ],
+ "rules": [
+  {
+   "id": "diataxis-one-type",
+   "source": "diataxis",
+   "name": "One doc, one type",
+   "rule": "Keep each document to one type: tutorial, how-to guide, reference or explanation. Link to the other types instead of mixing them in.",
+   "look_for": "Steps interrupted by paragraphs of background, design history or full option tables; reference pages containing procedures.",
+   "bad": "Run `make dev`. Historically we used Docker Compose because the original team preferred it, and before that Vagrant.",
+   "good": "Run `make dev`. For why the project uses Make, see About the build system."
+  },
+  {
+   "id": "diataxis-howto-title",
+   "source": "diataxis",
+   "name": "Title how-tos 'How to'",
+   "rule": "Title a how-to guide with exactly what it shows, in the form 'How to' plus the task.",
+   "look_for": "Procedural doc titled with a bare noun phrase or '-ing' phrase: 'Worker deployment', 'Deploying workers'.",
+   "bad": "Queue worker deployment",
+   "good": "How to deploy a queue worker"
+  },
+  {
+   "id": "diataxis-howto-goal",
+   "source": "diataxis",
+   "name": "Write for the user's goal",
+   "rule": "Build a how-to guide around a task the user needs done, not around a tool's features or buttons.",
+   "look_for": "Steps that only narrate obvious tool operations ('click Deploy to deploy') with no stated user goal.",
+   "bad": "To deploy the configuration, select the options and press Deploy.",
+   "good": "To keep failed orders for 14 days, set `retention_days: 14` on the dead-letter queue, then deploy."
+  },
+  {
+   "id": "diataxis-tutorial-goal",
+   "source": "diataxis",
+   "name": "Show the destination",
+   "rule": "Open a tutorial by saying what the learner will build or achieve.",
+   "look_for": "Tutorial begins with steps or concepts and never states the finished result up front.",
+   "bad": "Step 1: Install Redis.",
+   "good": "In this tutorial we will build an order API that queues confirmation emails. Step 1: Install Redis."
+  },
+  {
+   "id": "diataxis-tutorial-expected",
+   "source": "diataxis",
+   "name": "Show expected output",
+   "rule": "After each tutorial step, tell the learner what they should see, with example output where possible.",
+   "look_for": "A command or action with no following line that shows or describes the expected result.",
+   "bad": "Run `curl localhost:8080/health`.",
+   "good": "Run `curl localhost:8080/health`. The API responds with `{\"status\":\"ok\"}`."
+  },
+  {
+   "id": "diataxis-tutorial-one-path",
+   "source": "diataxis",
+   "name": "One path in tutorials",
+   "rule": "In a tutorial, give a single path to the goal; leave options and alternatives for other docs.",
+   "look_for": "'Alternatively', 'you could also', 'or, if you prefer' inside tutorial steps.",
+   "bad": "Install Postgres with Homebrew, or alternatively Docker, or you could also use a managed instance.",
+   "good": "Install Postgres with Homebrew."
+  },
+  {
+   "id": "diataxis-reference-neutral",
+   "source": "diataxis",
+   "name": "Reference only describes",
+   "rule": "In reference material, state facts about the system neutrally; leave out opinion, marketing and step-by-step instruction.",
+   "look_for": "Opinion or sales words in reference text ('powerful', 'easy', 'simply'), or procedures mixed into parameter descriptions.",
+   "bad": "`max_retries` is a powerful option you will love. First open the dashboard, then click Settings.",
+   "good": "`max_retries`: integer, default 3. Number of times the worker retries a failed job."
+  },
+  {
+   "id": "diataxis-explanation-why",
+   "source": "diataxis",
+   "name": "Explain the why",
+   "rule": "In explanation, give reasons and context: design decisions, constraints and the alternatives considered.",
+   "look_for": "Overview lists components but never says why they were chosen or what trade-offs they carry.",
+   "bad": "The system uses a queue between the API and the worker.",
+   "good": "The API puts emails on a queue so that a slow mail provider cannot delay order responses."
+  },
+  {
+   "id": "google-tw1-define-terms",
+   "source": "google-tw1",
+   "name": "Define new terms",
+   "rule": "Define each unfamiliar term or acronym where it first appears, or link to a definition.",
+   "look_for": "Acronym or project-specific term used with no definition or link on first use: 'the DLQ', 'the reaper'.",
+   "bad": "Failed jobs go to the DLQ.",
+   "good": "Failed jobs go to the dead-letter queue (DLQ), a queue that holds messages the worker could not process."
+  },
+  {
+   "id": "google-tw1-consistent-terms",
+   "source": "google-tw1",
+   "name": "One name per thing",
+   "rule": "After you name something, keep using that exact name.",
+   "look_for": "One component called by several names: 'worker', then 'consumer', then 'job runner'.",
+   "bad": "The worker reads the queue. The consumer then sends the email.",
+   "good": "The worker reads the queue. The worker then sends the email."
+  },
+  {
+   "id": "google-tw1-pronouns",
+   "source": "google-tw1",
+   "name": "No ambiguous pronouns",
+   "rule": "Replace any 'it', 'this', 'that' or 'they' that could point at more than one noun.",
+   "look_for": "A pronoun that follows two or more candidate nouns, so its referent is unclear.",
+   "bad": "The API sends the job to the queue, and it retries it if it fails.",
+   "good": "The API sends the job to the queue. If the job fails, the worker retries the job."
+  },
+  {
+   "id": "google-tw1-active",
+   "source": "google-tw1",
+   "name": "Prefer active voice",
+   "rule": "Write in active voice so the reader knows which component performs the action.",
+   "look_for": "'is', 'are' or 'was' plus a past participle with no actor: 'the job is retried', 'requests are validated'.",
+   "bad": "The order is written to the database.",
+   "good": "The API writes the order to the database."
+  },
+  {
+   "id": "google-tw1-there-is",
+   "source": "google-tw1",
+   "name": "Cut 'there is'",
+   "rule": "Rewrite sentences that start with 'there is' or 'there are' around a real subject and verb.",
+   "look_for": "Sentences beginning 'There is', 'There are' or 'There exists'.",
+   "bad": "There is a worker that processes the queue.",
+   "good": "A worker processes the queue."
+  },
+  {
+   "id": "google-tw1-one-idea",
+   "source": "google-tw1",
+   "name": "One idea per sentence",
+   "rule": "Limit each sentence to a single idea; split long ones or convert them to lists.",
+   "look_for": "Sentences with three or more clauses chained by 'and', 'which' or 'but', or running past about 30 words.",
+   "bad": "The API validates the order and writes it to Postgres, which triggers a message that the worker reads and then emails.",
+   "good": "The API validates the order and writes it to Postgres. The API then publishes a message. The worker reads the message and sends the email."
+  },
+  {
+   "id": "google-tw1-numbered",
+   "source": "google-tw1",
+   "name": "Number sequential steps",
+   "rule": "Put steps that must happen in order in a numbered list; use bullets only when order does not matter.",
+   "look_for": "Ordered steps written as a paragraph ('first… then… after that') or as bullet points.",
+   "bad": "First clone the repo, then run `make dev`, and after that open the dashboard.",
+   "good": "1. Clone the repo.\n2. Run `make dev`.\n3. Open the dashboard."
+  },
+  {
+   "id": "google-tw1-imperative",
+   "source": "google-tw1",
+   "name": "Start steps with verbs",
+   "rule": "Begin every numbered step with an imperative verb.",
+   "look_for": "Numbered steps starting with 'You should', 'The user', 'Next, the' or a noun.",
+   "bad": "1. The repo should be cloned by the user.",
+   "good": "1. Clone the repo."
+  },
+  {
+   "id": "google-tw1-scope",
+   "source": "google-tw1",
+   "name": "State scope and audience",
+   "rule": "Begin the document by stating what it covers, who it is for and its key points.",
+   "look_for": "Opening paragraph that does not say what the doc covers or who should read it.",
+   "bad": "Orders are important to our business.",
+   "good": "This guide shows backend engineers how to run the order service locally. It assumes you have Docker installed."
+  },
+  {
+   "id": "google-style-second-person",
+   "source": "google-style",
+   "name": "Address the reader as you",
+   "rule": "Write to the reader as 'you'; do not use 'we' or 'the user' for the reader's actions.",
+   "look_for": "'The user should', 'developers must', 'one can', or 'we' for actions the reader performs.",
+   "bad": "The user should set the API key.",
+   "good": "Set your API key."
+  },
+  {
+   "id": "google-style-conditions-first",
+   "source": "google-style",
+   "name": "Condition before instruction",
+   "rule": "Put the condition before the instruction it applies to.",
+   "look_for": "Instruction sentences that end in 'if…', 'when…' or 'unless…'.",
+   "bad": "Restart the worker if the queue is stuck.",
+   "good": "If the queue is stuck, restart the worker."
+  },
+  {
+   "id": "google-style-code-font",
+   "source": "google-style",
+   "name": "Code in code font",
+   "rule": "Format commands, file names, endpoints, field names and other code-related text as code.",
+   "look_for": "Commands, paths, endpoints or config keys in plain text or quotation marks instead of backticks.",
+   "bad": "Run make dev and open config.yaml.",
+   "good": "Run `make dev` and open `config.yaml`."
+  },
+  {
+   "id": "google-style-no-preannounce",
+   "source": "google-style",
+   "name": "Don't pre-announce",
+   "rule": "Document what exists now; leave out announcements of unreleased features.",
+   "look_for": "'Coming soon', 'will be supported in a future release', 'we plan to add'.",
+   "bad": "Batch refunds are coming soon.",
+   "good": "The API does not support batch refunds."
+  },
+  {
+   "id": "google-style-link-text",
+   "source": "google-style",
+   "name": "Descriptive link text",
+   "rule": "Write link text that describes the destination.",
+   "look_for": "Links labelled 'click here', 'here', 'this page', or a bare URL.",
+   "bad": "For queue settings, click [here](/reference/queue).",
+   "good": "See the [queue settings reference](/reference/queue)."
+  },
+  {
+   "id": "ms-style-point-first",
+   "source": "ms-style",
+   "name": "Lead with the point",
+   "rule": "Put the most important information first and front-load keywords so readers can scan.",
+   "look_for": "A document or section opening with history or preamble, with the key action or fact several sentences in.",
+   "bad": "Over the years many teams have asked about retries. After much discussion, we decided the worker retries three times.",
+   "good": "The worker retries a failed job three times."
+  },
+  {
+   "id": "ms-style-sentence-case",
+   "source": "ms-style",
+   "name": "Sentence-case headings",
+   "rule": "Capitalize only the first word and proper nouns in headings.",
+   "look_for": "Headings In Title Case: 'Getting Started With The Order Service'.",
+   "bad": "Getting Started With The Order Service",
+   "good": "Getting started with the order service"
+  },
+  {
+   "id": "ms-style-contractions",
+   "source": "ms-style",
+   "name": "Use contractions",
+   "rule": "Use common contractions such as it's, you'll and don't to keep a friendly, natural tone.",
+   "look_for": "'Do not', 'it is', 'you will', 'cannot' spelled out throughout where a contraction would read naturally.",
+   "bad": "You will not need a database for this step.",
+   "good": "You won't need a database for this step."
+  }
+ ],
+ "factual": true
 }
