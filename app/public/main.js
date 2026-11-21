@@ -277,6 +277,7 @@ const AUTOS = [['autoDraw', 'draw'], ['autoMotion', 'motion'], ['autoFacts', 'fa
 for (const [id, k] of AUTOS) $('#' + id).onchange = (e) => {
   S.auto[k] = e.target.checked; store.set(id, S.auto[k] ? '1' : '0');
   if (k === 'draw' && S.auto.draw) schedule(); if (k === 'blanks') { renderBlanks(true); if (S.auto.blanks) runFills(); }
+  if (k === 'facts' && S.auto.facts) { if (S.live) runCoach(); else findClaims(); }
 };
 // Pause stops new automatic work from starting. Requests already sent keep going; Stop everything cancels those too.
 function renderPause() {
@@ -324,7 +325,7 @@ $('#pauseBtn').onclick = $('#pauseBtn2').onclick = () => setPaused(!S.paused);
 $('#stopAllBtn').onclick = () => {
   setPaused(true); const c = S.coach;
   for (const sc of [...S.scenes.values()]) { if (flying(sc)) { sc.ctrl.abort(); S.scenes.delete(sc.key); } stopImproving(sc); }
-  c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear(); c.factBusy?.abort(); c.factBusy = null;
+  c.runs.forEach((r) => r.ctrl.abort()); c.runs.clear(); c.factBusy?.abort(); c.factBusy = null; c.claimsRun?.ctrl.abort(); c.claimsRun = null;
   if (c.fills.busy) { c.fills.busy.abort(); c.fills.busy = null; }
   c.research = c.research.filter((r) => { const busy = ['search', 'wait', 'gen'].includes(r.status); if (busy) r.ctrl.abort(); return !busy; });
   renderResearch(); renderBlanks(true); renderPages(); showCurrent(); renderCoach(); renderQueue();
@@ -345,6 +346,7 @@ function onText(immediate = false, changed = true) {
   // a request for a half-typed sentence would be stale before it started, and its replacement queues again.
   clearTimeout(sceneTimer); sceneTimer = setTimeout(schedule, immediate ? 50 : SCENE_PAUSE);
   clearTimeout(coachTimer); if (S.live) coachTimer = setTimeout(runCoach, immediate ? 200 : COACH_PAUSE);
+  else if (S.auto.facts && changed) coachTimer = setTimeout(findClaims, COACH_PAUSE);
   clearTimeout(fillTimer); fillTimer = setTimeout(runFills, immediate ? 400 : COACH_PAUSE);
   renderBlanks(); renderCoach();
 }
@@ -644,6 +646,23 @@ function idleWhy() {
   if (!S.improve) return 'All caught up. Improve looks is off';
   return 'About to refine the next scene';
 }
+// Where each kind of work stands, in a line under its switch: a switch that is on with nothing left to do says so.
+function workStatus() {
+  const c = S.coach, n = S.paras.filter((p) => p.text.length >= 12).length, plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
+  const scs = S.paras.map((_, i) => activeFor(i)).filter((sc) => sc && sc.status === 'done' && sc.lines.length);
+  const moving = scs.filter((sc) => sc.lines.some((l) => l.t === 'act' || l.t === 'count')).length, full = scs.filter((sc) => (sc.round || 0) >= PLAN.length).length;
+  const slots = blanksIn(ta.value).filter((x) => !STAGE_DIR.test(x)), filled = slots.filter((x) => (c.fills.opts.get(x) || []).some((o) => o.text)).length;
+  const reviewed = c.saved && c.saved.text === ta.value, claims = c.factRuns.reduce((k, fr) => k + fr.quotes.length, 0);
+  const diagram = S.pack?.visual === 'diagram';
+  return {
+    draw: n ? (scs.length >= n ? `All ${plural(n, 'scene')} drawn` : `${scs.length} of ${plural(n, 'scene')} drawn`) : 'Nothing to draw yet',
+    motion: diagram ? 'Diagrams move on their own' : !scs.length ? 'Needs a drawing first' : moving >= scs.length ? 'Every scene has motion. It runs once per scene; Run now redoes this one' : `${moving} of ${plural(scs.length, 'scene')} have motion`,
+    improve: diagram ? 'Not used for diagrams' : !scs.length ? 'Needs a drawing first' : S.improve ? (full >= scs.length ? 'Refining the scenes in turn, without stopping' : `${full} of ${plural(scs.length, 'scene')} through their first passes`) : `Off. ${full} of ${plural(scs.length, 'scene')} through their first passes`,
+    review: ta.value.trim().length < 3 ? 'Nothing to read yet' : reviewed ? 'This draft is reviewed. Runs again when the words change' : 'The draft changed since the last review',
+    facts: c.factBusy ? 'Checking now' : c.claimsRun ? 'Finding the claims to check' : `${plural(claims, 'claim')} checked. Runs again when the words change`,
+    blanks: slots.length ? `${filled} of ${plural(slots.length, 'blank')} have suggestions` : 'No blanks in the draft',
+  };
+}
 const mins = (ms) => (ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`);
 function queueItems() {
   const c = S.coach, items = [], wanted = new Set(S.paras.map((p) => keyOf(p.text)));
@@ -652,6 +671,7 @@ function queueItems() {
     for (const imp of sc.imps || []) if (imp.status !== 'over') items.push({ o: imp, kind: 'improve', sc, title: `Scene ${sc.idx + 1}`, sub: imp.focus === 'motion' ? 'adding motion' : imp.focus === 'refine' ? 'refining' : `improving ${imp.focus}`, text: sc.text });
   }
   for (const r of c.runs.values()) { const stale = r.text !== ta.value; items.push({ o: r, kind: 'coach', title: 'Review', sub: stale ? 'older draft' : '', text: r.text, stale }); }
+  if (c.claimsRun) items.push({ o: c.claimsRun, kind: 'claims', title: 'Fact check', sub: 'finding the claims', text: c.claimsRun.text });
   if (c.factBusy) items.push({ o: c.factBusy, kind: 'facts', title: 'Fact check', sub: '', text: c.factBusy.quotes.join(' · ') });
   for (const r of c.research) if (['search', 'wait', 'gen'].includes(r.status)) items.push({ o: r, kind: 'research', title: 'Agent', sub: '', text: r.q });
   if (c.fills.busy) items.push({ o: c.fills.busy, kind: 'fills', title: 'Blank suggestions', sub: '', text: c.fills.busy.slots.join(' · ') });
@@ -666,6 +686,7 @@ function renderQueue() {
   pill.innerHTML = `<b class="lamp"></b><span>${esc(words)}</span>${items.length > 1 ? `<i>+${items.length - 1}</i>` : ''}`;
   $('#activityCount').textContent = items.length || '';
   if (S.coach.tab !== 'activity') { queueSig = ''; return; }
+  for (const [k, text] of Object.entries(workStatus())) $('#st-' + k).textContent = text;
   $('#spent').innerHTML = [...S.spent].map(([kind, v]) => `<div><b>${esc(kind)}</b><span>${v.n} request${v.n === 1 ? '' : 's'}</span><span>${mins(v.wait)} in queue</span><span>${mins(v.gen)} answering</span>${v.stopped ? `<span>${v.stopped} stopped</span>` : ''}</div>`).join('') || 'No requests yet.';
   $('#queueEmpty').hidden = items.length > 0;
   const sig = items.map((it) => `${qId(it.o)}${it.o.status === 'gen' ? 'g' : 'w'}${it.stale ? 's' : ''}${it.o.prompt ? 'p' : ''}`).join(',');
@@ -708,6 +729,7 @@ function queueAct(id, act, guide = '') {
   } else if (it.kind === 'improve') { it.sc.round = PLAN.length; stopImproving(it.sc); markDirty(); }
   else if (it.kind === 'coach') { o.ctrl.abort(); c.runs.delete(o.seq); if (act === 'refresh') runCoach(true); renderCoach(); }
   else if (it.kind === 'facts') { o.abort(); c.factBusy = null; }
+  else if (it.kind === 'claims') { o.ctrl.abort(); c.claimsRun = null; c.claimsText = o.text; }
   else if (it.kind === 'fills') { o.abort(); c.fills.busy = null; o.slots.forEach((s) => c.fills.asked.add(s)); renderBlanks(true); }
   else if (it.kind === 'research') { o.ctrl.abort(); c.research = c.research.filter((r) => r !== o); renderResearch(); }
   renderQueue();
@@ -957,6 +979,24 @@ async function runCoach(force = false) {
     c.lastRun = run; checkFacts(run, Boolean(c.factsNext)); c.factsNext = false;
   }
   renderCoach();
+}
+
+// With Review off and Check facts on, the draft is still read for its claims, but no notes are shown.
+async function findClaims() {
+  const c = S.coach, text = ta.value; if (!S.pack || S.paused || !S.auto.facts || S.live || c.claimsRun || text.trim().length < 3 || c.claimsText === text || (c.saved?.text === text && c.factRuns.length)) return;
+  const run = { text, pack: S.pack.id, project: S.project?.id, status: 'wait', t0: performance.now(), ctrl: new AbortController(), checks: [] };
+  c.claimsRun = run; let ok = false;
+  try {
+    await sse('/api/coach', { pack: run.pack, text }, run.ctrl.signal, (ev) => {
+      if (ev.type === 'prompt') run.prompt = ev.text;
+      else if (ev.type === 'first') run.status = 'gen';
+      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o?.k === 'check') run.checks.push(o); }
+      else if (ev.type === 'done') ok = true;
+    });
+  } catch { /* aborted or failed */ }
+  if (c.claimsRun === run) c.claimsRun = null;
+  if (!ok || run.project !== S.project?.id || run.pack !== S.pack.id) return;
+  c.claimsText = text; c.lastRun = run; checkFacts(run);
 }
 
 // Fact checks run after the tips, on their own request, and only for claims that were not checked before.

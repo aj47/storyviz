@@ -101,6 +101,7 @@ main { height: calc(100% - 48px); display: grid; grid-template-columns: minmax(3
 @keyframes lamp { 50% { opacity: .35; } }
 .autos { display: grid; grid-template-columns: 1fr; gap: 7px; }
 .auto { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.auto small { display: block; margin: 2px 0 0 33px; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
 .steer { margin-top: 10px; }
 .steer textarea { display: block; resize: vertical; min-height: 52px; padding: 8px 10px; font-size: 13px; line-height: 1.45; color: var(--text); font-family: var(--sans); }
 .steer-acts { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 7px; }
