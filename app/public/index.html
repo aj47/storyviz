@@ -19,7 +19,6 @@
   <span class="grow"></span>
   <button class="activity" id="queueBtn" title="What the AI is working on now. Click to stop, steer or choose what it spends time on."></button>
   <button class="quiet" id="pauseBtn" title="Stop starting new automatic work. Requests already sent keep going."></button>
-  <button class="quiet" id="historyBtn" title="Every earlier version of this project: text, drawings and notes. Restore any of them.">History</button>
   <button class="quiet" id="openBtn" title="Open a project (⌘O)">Open</button>
   <button class="solid" id="newBtn">New</button>
 </header>
@@ -67,15 +66,24 @@
 
   <aside class="coach">
     <div class="coach-head">
-      <h2>Coach</h2>
+      <h2>Agent</h2>
       <span class="coach-status" id="coachStatus"></span>
       <button class="mini" id="reviewBtn" hidden>Review</button>
     </div>
+    <!-- One box for every instruction: about the picture, it goes to the illustrator; about the words, to the script agent. -->
+    <form class="steer" id="steerForm">
+      <textarea id="steerText" class="field" rows="2" maxlength="600" spellcheck="false" placeholder="Tell the agent what to do: rewrite the hook, fill the blanks, set this scene at night"></textarea>
+      <div class="steer-acts">
+        <button class="mini" data-to="scene" type="button" title="Send this to the illustrator as a direction for the scene you are on">To this scene</button>
+        <button class="solid" data-to="script" title="Send this to the agent, which can research and edit the script (Enter)">To the script</button>
+      </div>
+    </form>
     <nav class="tabs" id="tabs">
       <button data-tab="tips">Tips<i id="tipsCount"></i></button>
-      <button data-tab="structure">Structure<i id="stagesCount"></i></button>
       <button data-tab="ideas">Ideas<i id="ideasCount"></i></button>
-      <button data-tab="research">Agent<i id="researchCount"></i></button>
+      <button data-tab="research">Asks<i id="researchCount"></i></button>
+      <button data-tab="activity">Activity<i id="activityCount"></i></button>
+      <button data-tab="history">History</button>
     </nav>
     <div class="pane" data-pane="tips">
       <div id="blanksWrap" hidden>
@@ -87,25 +95,43 @@
       <button class="more" id="moreTips" hidden></button>
       <div id="goodWrap" hidden><h3>Working well</h3><div id="good"></div></div>
       <details id="unsureWrap" hidden><summary></summary><div id="unsure"></div></details>
-    </div>
-    <div class="pane" data-pane="structure" hidden>
-      <h3 id="structureName"></h3>
-      <div class="stages" id="stages"></div>
+      <button class="rules-link" id="rulesBtn"></button>
     </div>
     <div class="pane" data-pane="ideas" hidden>
+      <h3 class="h-row"><span id="structureName"></span><i id="stagesCount"></i></h3>
+      <div class="stages" id="stages"></div>
       <p class="empty" id="ideasEmpty">Ideas show up after a review.</p>
       <div id="detailsWrap" hidden><h3>Facts you could use</h3><div id="details"></div></div>
       <div id="asksWrap" hidden><h3>Answer this</h3><div id="asks"></div></div>
       <div id="nextWrap" hidden><h3>Add a next line</h3><div id="next"></div></div>
     </div>
     <div class="pane" data-pane="research" hidden>
-      <form class="ask" id="askForm">
-        <textarea id="askText" class="field" rows="3" maxlength="600" spellcheck="false" placeholder="Tell the agent what to do: fill in the blanks, rewrite the hook, research how much water AI uses"></textarea>
-        <button class="solid" id="askBtn" disabled>Send</button>
-      </form>
+      <p class="empty" id="researchEmpty">What you send to the script shows up here: what the agent found, and every change it made, with Undo.</p>
       <div id="research"></div>
     </div>
-    <button class="rules-link" id="rulesBtn"></button>
+    <div class="pane" data-pane="activity" hidden>
+      <h3>Working now</h3>
+      <p class="empty" id="queueEmpty">Nothing is waiting.</p>
+      <div id="queue"></div>
+      <h3>Kinds of work</h3>
+      <p class="empty">The switch lets the agent start it on its own. Run now does it once, switch on or off; scene work takes what is typed in the box above as a one-off direction.</p>
+      <div class="autos">
+    <div class="auto"><label class="sw" title="Draw a scene for each paragraph as you write"><input type="checkbox" id="autoDraw"><i></i>Draw scenes</label><button class="mini" data-run="draw" title="Draw every scene that has no drawing yet. With a direction typed above, redraw the scene you are on to follow it.">Run now</button></div>
+    <div class="auto"><label class="sw" title="Add motion that acts out the paragraph"><input type="checkbox" id="autoMotion"><i></i>Add motion</label><button class="mini" data-run="motion" title="Choreograph the scene you are on again">Run now</button></div>
+    <div class="auto"><label class="sw" title="Keep working on how the scenes look. First detail, setting and background, then round after round of refining, for as long as this is on."><input type="checkbox" id="improveSw"><i></i>Improve looks</label><button class="mini" data-run="improve" title="One more pass on the scene you are on">Run now</button></div>
+    <div class="auto"><label class="sw" title="Review the draft every time you pause typing"><input type="checkbox" id="liveSw"><i></i>Review the draft</label><button class="mini" data-run="review" title="Review the draft as it is now">Run now</button></div>
+    <div class="auto"><label class="sw" title="Check the draft's factual claims against the web"><input type="checkbox" id="autoFacts"><i></i>Check facts</label><button class="mini" data-run="facts" title="Check the draft's claims now">Run now</button></div>
+    <div class="auto"><label class="sw" title="Suggest what goes in each [blank]"><input type="checkbox" id="autoBlanks"><i></i>Suggest blanks</label><button class="mini" data-run="blanks" title="Suggest fills for the blanks now">Run now</button></div>
+      </div>
+      <div class="autos-acts"><button class="mini" id="pauseBtn2"></button><button class="mini bad" id="stopAllBtn" title="Cancel every request and pause">Stop everything</button></div>
+      <h3>Time spent this session</h3>
+      <div id="spent"></div>
+    </div>
+    <div class="pane" data-pane="history" hidden>
+      <p class="empty">Every change is kept: typing, agent edits, filled blanks and each drawing. Restoring a version is itself a new version, so nothing is lost.</p>
+      <p class="empty" id="historyEmpty"></p>
+      <div id="history"></div>
+    </div>
   </aside>
 </main>
 
@@ -116,32 +142,6 @@
   <div class="types" id="newTypes"></div>
   <h3 id="projListHead">Open a project</h3>
   <div class="list" id="projList"></div>
-</dialog>
-
-<dialog id="queueDlg">
-  <div class="dlg-head"><h2>Activity</h2><button class="x" data-close aria-label="Close">×</button></div>
-  <h3>What the AI does on its own</h3>
-  <div class="autos">
-    <label class="sw" title="Draw a scene for each paragraph as you write"><input type="checkbox" id="autoDraw"><i></i>Draw scenes</label>
-    <label class="sw" title="Add motion that acts out the paragraph"><input type="checkbox" id="autoMotion"><i></i>Add motion</label>
-    <label class="sw" title="Keep working on how the scenes look. First detail, setting and background, then round after round of refining, for as long as this is on."><input type="checkbox" id="improveSw"><i></i>Improve looks</label>
-    <label class="sw" title="Review the draft every time you pause typing"><input type="checkbox" id="liveSw"><i></i>Review the draft</label>
-    <label class="sw" title="Check the draft's factual claims against the web"><input type="checkbox" id="autoFacts"><i></i>Check facts</label>
-    <label class="sw" title="Suggest what goes in each [blank]"><input type="checkbox" id="autoBlanks"><i></i>Suggest blanks</label>
-  </div>
-  <div class="autos-acts"><button class="mini" id="pauseBtn2"></button><button class="mini bad" id="stopAllBtn" title="Cancel every request and pause">Stop everything</button></div>
-  <h3>Working now</h3>
-  <p class="empty" id="queueEmpty">Nothing is waiting.</p>
-  <div id="queue"></div>
-  <h3>Time spent this session</h3>
-  <div id="spent"></div>
-</dialog>
-
-<dialog id="historyDlg">
-  <div class="dlg-head"><h2>History</h2><button class="x" data-close aria-label="Close">×</button></div>
-  <p class="empty">Every change is kept: typing, agent edits, filled blanks and each drawing. Restoring a version is itself a new version, so nothing is lost.</p>
-  <p class="empty" id="historyEmpty"></p>
-  <div id="history"></div>
 </dialog>
 
 <dialog id="rulesDlg">

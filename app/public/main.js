@@ -287,6 +287,39 @@ function setPaused(on) {
   if (on) stopImproving(); else { schedule(); if (S.live) runCoach(); runFills(); }
   renderQueue();
 }
+// Run now: each kind of work once, by hand, whatever its switch says. Scene work takes the typed direction along.
+function runNow(kind, btn) {
+  const c = S.coach, note = $('#steerText').value.trim().slice(0, 300), sc = sceneNow(), said = (t) => { const was = btn.textContent; btn.textContent = t; setTimeout(() => { btn.textContent = was; }, 1600); };
+  const sceneJob = ['draw', 'motion', 'improve'].includes(kind);
+  if (kind === 'draw') {
+    if (note) { if ((S.paras[S.cur]?.text.length || 0) < 12) return said('No scene here'); guideScene(S.cur, note); }
+    else if (!schedule(true)) return said('All drawn');
+  } else if (kind === 'motion' || kind === 'improve') {
+    if (!sc || sc.status !== 'done' || !sc.lines.length) return said('No drawing yet');
+    if (S.pack.visual === 'diagram') return said('Not for diagrams');
+    if (kind === 'motion') dropMotion(sc);
+    if (kind === 'motion') { sc.wantMotion = true; sc.noteMotion = note; } else { sc.wantImprove = true; sc.noteImprove = note; }
+    sc.impError = false;
+    if (improving && improving !== sc) stopImproving();
+  } else if (kind === 'review') { if (ta.value.trim().length < 3) return said('Nothing to read'); runCoach(true); }
+  else if (kind === 'facts') {
+    if (ta.value.trim().length < 3) return said('Nothing to check');
+    // Claims come out of a review, so a draft that changed since its last review is reviewed first.
+    if (c.lastRun && c.lastRun.text === ta.value && !c.factBusy) checkFacts(c.lastRun, true); else { c.factsNext = true; runCoach(true); }
+  } else if (kind === 'blanks') { if (!blanksIn(ta.value).some((x) => !STAGE_DIR.test(x))) return said('No blanks'); runFills(true); }
+  if (sceneJob && note) $('#steerText').value = '';
+  said('Sent'); renderPages(); renderQueue();
+}
+$('.autos').addEventListener('click', (e) => { const b = e.target.closest('button[data-run]'); if (b) runNow(b.dataset.run, b); });
+function steer(to) {
+  const box = $('#steerText'), text = box.value.trim(); if (text.length < 3) { box.focus(); return; }
+  if (to === 'scene') { if ((S.paras[S.cur]?.text.length || 0) < 12) return; guideScene(S.cur, text); setTab('activity'); }
+  else { setTab('research'); ask(text); }
+  box.value = ''; renderQueue();
+}
+$('#steerForm').addEventListener('click', (e) => { const b = e.target.closest('button[data-to]'); if (b) { e.preventDefault(); steer(b.dataset.to); } });
+$('#steerForm').addEventListener('submit', (e) => { e.preventDefault(); steer('script'); });
+$('#steerText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); steer(e.metaKey || e.ctrlKey ? 'scene' : 'script'); } });
 $('#pauseBtn').onclick = $('#pauseBtn2').onclick = () => setPaused(!S.paused);
 $('#stopAllBtn').onclick = () => {
   setPaused(true); const c = S.coach;
@@ -316,7 +349,7 @@ function onText(immediate = false, changed = true) {
   renderBlanks(); renderCoach();
 }
 function moved(force = false) { if (syncCurrent() || force) { renderBackdrop(); renderPages(); showCurrent(); } }
-let lastEdit = 0;
+let lastEdit = -1e9;
 ta.addEventListener('input', () => { lastEdit = performance.now(); onText(); });
 ta.addEventListener('scroll', () => { $('#backdrop').scrollTop = ta.scrollTop; });
 for (const ev of ['keyup', 'click', 'focus']) ta.addEventListener(ev, () => moved());
@@ -390,8 +423,8 @@ function sceneFor(idx) {
 }
 function activeFor(idx) { const p = S.paras[idx]; return p ? S.scenes.get(keyOf(p.text)) : null; }
 
-function schedule() {
-  if (!S.pack) return;
+function schedule(force = false) {
+  if (!S.pack) return 0;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
   const wanted = new Set(S.paras.map((p) => keyOf(p.text)));
   // A request already in the queue is never cancelled because its paragraph was edited. It lands, and the
@@ -405,13 +438,15 @@ function schedule() {
   }
   if (improving && !wanted.has(improving.key)) stopImproving();
   let live = [...S.scenes.values()].filter(flying).length;
-  for (const i of S.paused || !S.auto.draw ? [] : order) {
+  let started = 0;
+  for (const i of force !== true && (S.paused || !S.auto.draw) ? [] : order) {
     const p = S.paras[i]; if (!p || p.text.length < 12) continue;
     const key = keyOf(p.text); if (S.scenes.has(key) || busy.has(i)) continue;
     if (live >= 5) break;
-    startScene(i, p.text, key); live++;
+    startScene(i, p.text, key); live++; started++;
   }
   renderPages(); showCurrent();
+  return started;
 }
 
 // How much two texts are the same paragraph: the share of the shorter one's words found in the other,
@@ -586,12 +621,14 @@ $('#motion').addEventListener('click', (e) => {
   markDirty(`Scene ${S.cur + 1} motion removed`); renderInspector();
 });
 // Re-animate throws the scene's motion away and asks for it again. It jumps the line of automatic work.
-$('#animateBtn').onclick = () => {
-  const sc = sceneNow(); if (!sc || sc.status !== 'done') return;
+function dropMotion(sc) {
   const keep = sc.lines.map((l) => l.t !== 'act' && l.t !== 'count');
   sc.lines.forEach((l, i) => { if (!keep[i] && S.shown === sc) stage.dropAct(actKey(l)); });
   sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
-  sc.wantMotion = true; sc.impError = false; if (improving && improving !== sc) stopImproving();
+}
+$('#animateBtn').onclick = () => {
+  const sc = sceneNow(); if (!sc || sc.status !== 'done') return;
+  dropMotion(sc); sc.wantMotion = true; sc.noteMotion = $('#dirInput').value.trim(); sc.impError = false; if (improving && improving !== sc) stopImproving();
   renderInspector();
 };
 
@@ -627,7 +664,8 @@ function renderQueue() {
   const pill = $('#queueBtn'); pill.className = 'activity ' + (S.paused && !top ? 'paused' : top ? (top.o.status === 'gen' ? 'gen' : 'wait') : '');
   const words = top ? `${top.title}${top.sub ? ' · ' + top.sub : ''} · ${top.o.status === 'gen' ? 'answering' : top.o.status === 'search' ? 'searching' : Math.round((performance.now() - top.o.t0) / 1000) + 's in queue'}` : S.paused ? 'Paused' : idleWhy();
   pill.innerHTML = `<b class="lamp"></b><span>${esc(words)}</span>${items.length > 1 ? `<i>+${items.length - 1}</i>` : ''}`;
-  if (!$('#queueDlg').open) { queueSig = ''; return; }
+  $('#activityCount').textContent = items.length || '';
+  if (S.coach.tab !== 'activity') { queueSig = ''; return; }
   $('#spent').innerHTML = [...S.spent].map(([kind, v]) => `<div><b>${esc(kind)}</b><span>${v.n} request${v.n === 1 ? '' : 's'}</span><span>${mins(v.wait)} in queue</span><span>${mins(v.gen)} answering</span>${v.stopped ? `<span>${v.stopped} stopped</span>` : ''}</div>`).join('') || 'No requests yet.';
   $('#queueEmpty').hidden = items.length > 0;
   const sig = items.map((it) => `${qId(it.o)}${it.o.status === 'gen' ? 'g' : 'w'}${it.stale ? 's' : ''}${it.o.prompt ? 'p' : ''}`).join(',');
@@ -674,7 +712,7 @@ function queueAct(id, act, guide = '') {
   else if (it.kind === 'research') { o.ctrl.abort(); c.research = c.research.filter((r) => r !== o); renderResearch(); }
   renderQueue();
 }
-$('#queueBtn').onclick = () => { $('#queueDlg').showModal(); renderQueue(); };
+$('#queueBtn').onclick = () => setTab('activity');
 $('#queue').addEventListener('click', (e) => { const b = e.target.closest('button[type="button"][data-act]'); if (b) queueAct(b.closest('.q').dataset.id, b.dataset.act); });
 $('#queue').addEventListener('submit', (e) => { e.preventDefault(); const q = e.target.closest('.q'); queueAct(q.dataset.id, 'guide', q.querySelector('input')?.value || ''); });
 
@@ -690,7 +728,7 @@ const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort(
 function nextToImprove() {
   if (improving || !S.pack || S.pack.visual === 'diagram') return null;
   // Motion the writer asked for goes first, whatever the switches say.
-  const asap = [...S.scenes.values()].find((sc) => sc.wantMotion && sc.status === 'done' && sc.lines.length);
+  const asap = [...S.scenes.values()].find((sc) => (sc.wantMotion || sc.wantImprove) && sc.status === 'done' && sc.lines.length);
   if (asap) return asap;
   if (S.paused || (!S.improve && !S.auto.motion) || document.hidden) return null;
   // Improvement passes share the queue with everything else, so they wait until nothing the writer asked for is in it.
@@ -706,9 +744,12 @@ function nextToImprove() {
 }
 async function improveRound(sc) {
   improving = sc; sc.imps = [];
-  const round = sc.round || 0, motion = sc.wantMotion || (S.auto.motion && needsMotion(sc)); sc.wantMotion = false;
+  const round = sc.round || 0, motion = sc.wantMotion || (!sc.wantImprove && S.auto.motion && needsMotion(sc));
+  // Two things asked for by hand on one scene run one after the other, each with its own direction.
+  const note = (motion ? sc.noteMotion : sc.noteImprove) || '';
+  if (motion) { sc.wantMotion = false; sc.noteMotion = ''; } else { sc.wantImprove = false; sc.noteImprove = ''; }
   const refine = !motion && round >= PLAN.length;
-  const results = await Promise.all((motion ? ['motion'] : refine ? ['refine'] : PLAN[round]).map((focus) => improveOnce(sc, focus)));
+  const results = await Promise.all((motion ? ['motion'] : refine ? ['refine'] : PLAN[round]).map((focus) => improveOnce(sc, focus, note)));
   sc.imps = null; improving = null;
   if (results.includes('aborted')) return;
   if (results.every((r) => r === 'error')) sc.impError = true;
@@ -718,7 +759,7 @@ async function improveRound(sc) {
   else { const added = results.some((r) => r > 0); sc.round = added ? round + 1 : PLAN.length; markDirty(added ? `Scene ${sc.idx + 1} improved (${PLAN[round].join(', ')})` : 'Edited'); }
   renderPages();
 }
-async function improveOnce(sc, focus) {
+async function improveOnce(sc, focus, note = '') {
   const imp = { focus, status: 'wait', t0: performance.now(), genStart: 0, chars: 0, n: 0, ctrl: new AbortController() };
   sc.imps.push(imp);
   const idx = Math.max(0, S.paras.findIndex((p) => keyOf(p.text) === sc.key)); let ok = false;
@@ -728,7 +769,7 @@ async function improveOnce(sc, focus) {
     mode: S.pack.visual, strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'), paragraph: sc.text,
     // A refining pass must be a new answer each time; a replay from the cache would change nothing.
-    improve: true, focus, fresh: focus === 'refine', scene: sc.raw.join('\n'),
+    improve: true, focus, fresh: focus === 'refine' || Boolean(note), guide: note, scene: sc.raw.join('\n'),
   };
   try {
     await sse('/api/scene', body, imp.ctrl.signal, (ev) => {
@@ -822,8 +863,9 @@ function tick() {
 
 // ---------- coach ----------
 function setTab(tab) {
-  if (!['tips', 'structure', 'ideas', 'research'].includes(tab)) return;
-  S.coach.tab = tab;
+  if (tab === 'structure') tab = 'ideas';
+  if (!['tips', 'ideas', 'research', 'activity', 'history'].includes(tab)) return;
+  S.coach.tab = tab; if (tab === 'history') showHistory(); if (tab === 'activity') { queueSig = ''; setTimeout(renderQueue); }
   $$('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   $$('.pane').forEach((p) => { p.hidden = p.dataset.pane !== tab; });
 }
@@ -846,6 +888,7 @@ function renderCoach() {
   $('#tipsCount').textContent = tips + blanks || ''; $('#ideasCount').textContent = ideas || '';
   $('#researchCount').textContent = c.research.reduce((n, r) => n + r.lines.filter((o) => o.k === 'finding').length, 0) || '';
   $('#stagesCount').textContent = stages.length && c.shownSeq ? `${done}/${stages.length}` : '';
+  $('#structureName').parentElement.hidden = !stages.length;
   $('#reviewBtn').hidden = S.live && !S.paused;
   $('#detailsWrap').hidden = !$('#details').children.length;
   const unsure = $('#unsure').children.length; $('#unsureWrap').hidden = !unsure; $('#unsureWrap summary').textContent = `${unsure} claim${unsure === 1 ? '' : 's'} could not be checked`;
@@ -911,18 +954,18 @@ async function runCoach(force = false) {
   c.runs.delete(run.seq);
   if (run.status === 'done' && run.seq >= c.shownSeq && run.project === S.project?.id && run.pack === S.pack.id) {
     c.saved = { v: 2, text: run.text, pack: run.pack, lines: run.lines }; markDirty('Coach notes');
-    checkFacts(run);
+    c.lastRun = run; checkFacts(run, Boolean(c.factsNext)); c.factsNext = false;
   }
   renderCoach();
 }
 
 // Fact checks run after the tips, on their own request, and only for claims that were not checked before.
-async function checkFacts(run) {
+async function checkFacts(run, force = false) {
   const c = S.coach; const has = (q) => findQuote(ta.value, q) >= 0; const show = (o) => { coachLine({ seq: c.shownSeq, pack: run.pack }, o); c.saved?.lines.push(o); };
   for (const fr of c.factRuns) { const alive = fr.quotes.some(has); for (const o of fr.lines) if (o.k === 'fact' ? has(o.quote) : alive) show(o); }
   const known = new Set(c.factRuns.flatMap((fr) => fr.quotes.map((q) => q.toLowerCase())));
   const fresh = run.checks.filter((x) => x.quote && x.query && has(x.quote) && !known.has(String(x.quote).toLowerCase())).slice(0, 3);
-  if (!fresh.length || c.factBusy || S.paused || !S.auto.facts) return;
+  if (!fresh.length || c.factBusy || (!force && (S.paused || !S.auto.facts))) return;
   const ctrl = new AbortController(); Object.assign(ctrl, { t0: performance.now(), status: 'wait', quotes: fresh.map((x) => x.quote) }); c.factBusy = ctrl; const fr = { quotes: fresh.map((x) => x.quote), lines: [] }; let ok = false;
   try {
     await sse('/api/facts', { pack: run.pack, text: run.text, checks: fresh }, ctrl.signal, (ev) => {
@@ -1108,6 +1151,7 @@ function restoreResearch(saved) {
 }
 function renderResearch() {
   const c = S.coach;
+  $('#researchEmpty').hidden = c.research.length > 0;
   $('#research').innerHTML = c.research.map((r, i) => {
     const answer = r.lines.find((o) => o.k === 'answer'), over = r.status === 'done';
     const link = (o) => (o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title)}">${esc(hostOf(o.url))}</a>` : '');
@@ -1173,12 +1217,6 @@ async function ask(q) {
   if (r.status === 'done') { await applyAgent(r); markDirty(r.after != null ? undefined : 'Coach notes'); }
   renderResearch();
 }
-$('#askText').addEventListener('input', () => { $('#askBtn').disabled = $('#askText').value.trim().length < 3; });
-$('#askText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#askForm').requestSubmit(); } });
-$('#askForm').addEventListener('submit', (e) => {
-  e.preventDefault(); const box = $('#askText'); if (box.value.trim().length < 3) return;
-  ask(box.value); box.value = ''; $('#askBtn').disabled = true;
-});
 $('#research').addEventListener('click', async (e) => {
   const c = S.coach, x = e.target.closest('[data-x]'), f = e.target.closest('button.line'), u = e.target.closest('[data-undo]'), a = e.target.closest('[data-apply]');
   if (x) { const [r] = c.research.splice(Number(x.dataset.x), 1); r?.ctrl?.abort(); renderResearch(); markDirty('Coach notes'); }
@@ -1199,7 +1237,8 @@ function verLine(v, i) {
     + `<button class="mini" data-act="view">View</button>${i ? '<button class="mini" data-act="restore">Restore</button>' : ''}</div><pre hidden></pre></div>`;
 }
 async function showHistory() {
-  closeMenus(); const note = $('#historyEmpty'); note.hidden = false; note.textContent = 'Loading…'; $('#history').innerHTML = ''; $('#historyDlg').showModal();
+  if (!S.project) return;
+  const note = $('#historyEmpty'); note.hidden = false; note.textContent = 'Loading…'; $('#history').innerHTML = '';
   try {
     await saveNow();
     const r = await api('GET', `/api/projects/${S.project.id}/versions`);
@@ -1207,7 +1246,6 @@ async function showHistory() {
     note.hidden = r.versions.length > 0; note.textContent = r.off ? 'Version history is off on this server (git is missing).' : 'No versions yet.';
   } catch (e) { note.textContent = 'Could not load the history. ' + String(e.message || e).slice(0, 120); }
 }
-$('#historyBtn').onclick = showHistory;
 $('#history').addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-act]'), row = e.target.closest('.ver'); if (!b || !row) return;
   const pre = row.querySelector('pre');
@@ -1218,7 +1256,7 @@ $('#history').addEventListener('click', async (e) => {
   const when = row.querySelector('small').textContent.split(' · ')[0];
   loadProject({ ...v, id: S.project.id, createdAt: S.project.createdAt });
   markDirty(`Restored the version from ${when}`); await saveNow();
-  $('#historyDlg').close(); ta.focus();
+  ta.focus();
 });
 
 function addLine(text, why = 'Added a line') { const v = ta.value.replace(/\s+$/, ''); ta.value = v + (v ? ' ' : '') + text; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); onText(); markDirty(why); }
