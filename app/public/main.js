@@ -1,4 +1,4 @@
-import { Stage, STYLES, STYLE_ORDER } from './scene.js';
+import { Stage, STYLES, STYLE_ORDER, actKey } from './scene.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -100,7 +100,7 @@ function loadProject(p) {
   S.scenes.clear();
   for (const s of p.scenes || []) {
     const raw = (s.raw || []).filter((r) => parseLine(r)), lines = raw.map(parseLine); if (!lines.length) continue;
-    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
+    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', motionTried: Boolean(s.mo), status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
   applyPack(); restoreCoach(p.coach); restoreResearch(p.research); restoreFills(p.fills);
@@ -153,7 +153,7 @@ function snapshot(p) {
       for (const x of S.scenes.values()) if (x.pack === S.pack.id && x.idx === i && x.status === 'done' && x.raw.length && (!sc || x.seq > sc.seq)) sc = x;
     }
     const key = sc?.key.replace(/\|old$/, '');
-    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '' });
+    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', mo: sc.motionTried ? 1 : 0 });
   });
   p.scenes = [...kept.values()];
 }
@@ -421,7 +421,7 @@ function applyLine(sc, o) {
   const shown = S.shown === sc;
   if (o.t === 'reset') { sc.lines = []; sc.raw = []; sc.shot = null; sc.round = 0; if (shown) { stage.clear(); $('#title').textContent = ''; showShot(null); } return; }
   if (o.t === 'drop') {
-    const id = String(o.id), keep = sc.lines.map((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id)));
+    const id = String(o.id), keep = sc.lines.map((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id) || (l.t === 'act' && [l.id, l.of, l.from, l.to].includes(id))));
     sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
     if (shown) stage.drop(id);
     return;
@@ -429,6 +429,7 @@ function applyLine(sc, o) {
   let at = -1;
   if (o.t === 'obj' && o.id != null) at = sc.lines.findIndex((l) => l.t === 'obj' && String(l.id) === String(o.id));
   else if (o.t === 'env' || o.t === 'shot') at = sc.lines.findIndex((l) => l.t === o.t);
+  else if (o.t === 'act' || o.t === 'count') at = sc.lines.findIndex((l) => l.t === o.t && actKey(l) === actKey(o));
   if (o.t === 'env' && at >= 0) o = { ...sc.lines[at], ...o };
   const raw = JSON.stringify(o);
   if (at >= 0) { sc.lines[at] = o; sc.raw[at] = raw; } else { sc.lines.push(o); sc.raw.push(raw); }
@@ -443,7 +444,7 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null } 
   // A direction from the writer stays with the paragraph through later edits.
   sc.guide = guide ?? base?.guide ?? ''; sc.updating = Boolean(base);
   if (base) {
-    Object.assign(sc, { lines: base.lines.slice(), raw: base.raw.slice(), shot: base.shot, round: Math.min(base.round || 0, PLAN.length - 1) });
+    Object.assign(sc, { lines: base.lines.slice(), raw: base.raw.slice(), shot: base.shot, round: Math.min(base.round || 0, PLAN.length - 1), motionTried: base.motionTried });
     stopImproving(base);
     if (S.shown === base) S.shown = sc;
   }
@@ -588,6 +589,9 @@ $('#queue').addEventListener('submit', (e) => { e.preventDefault(); const q = e.
 // With the switch on, each finished scene goes back to Kimi in rounds. Round one sends three requests
 // at once, each with its own focus, so the wait in the queue is paid once; the later rounds polish.
 const PLAN = [['subject', 'setting', 'background'], ['polish'], ['polish'], ['polish']];
+// Once the first round has filled the scene in, one pass choreographs it: what moves, in what order, to tell the paragraph.
+// A scene that was drawn with motion already has it; this is for scenes that came out still.
+const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines.some((l) => l.t === 'act' || l.step);
 let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
@@ -596,16 +600,17 @@ function nextToImprove() {
   const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
   if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
-  for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && (sc.round || 0) < PLAN.length && !sc.impError) return sc; }
+  for (const i of order) { const sc = activeFor(i); if (sc && sc.status === 'done' && sc.lines.length && ((sc.round || 0) < PLAN.length || needsMotion(sc)) && !sc.impError) return sc; }
   return null;
 }
 async function improveRound(sc) {
   improving = sc; sc.imps = [];
-  const round = sc.round || 0;
-  const results = await Promise.all(PLAN[round].map((focus) => improveOnce(sc, focus)));
+  const round = sc.round || 0, motion = needsMotion(sc);
+  const results = await Promise.all((motion ? ['motion'] : PLAN[round]).map((focus) => improveOnce(sc, focus)));
   sc.imps = null; improving = null;
   if (results.includes('aborted')) return;
   if (results.every((r) => r === 'error')) sc.impError = true;
+  else if (motion) { sc.motionTried = true; markDirty(results[0] > 0 ? `Scene ${sc.idx + 1} animated` : 'Edited'); }
   // A round that changed nothing means Kimi has nothing left to add.
   else { const added = results.some((r) => r > 0); sc.round = added ? round + 1 : PLAN.length; markDirty(added ? `Scene ${sc.idx + 1} improved (${PLAN[round].join(', ')})` : 'Edited'); }
   renderPages();
@@ -626,7 +631,8 @@ async function improveOnce(sc, focus) {
       if (ev.type === 'prompt') imp.prompt = ev.text;
       else if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
-        const o = parseLine(ev.raw); if (!o || !['obj', 'many', 'env'].includes(o.t)) return;
+        const o = parseLine(ev.raw); if (!o || !(focus === 'motion' ? ['obj', 'act', 'count'] : ['obj', 'many', 'env']).includes(o.t)) return;
+        if (o.t === 'act') for (const f of ['id', 'of', 'from', 'to']) if (renamed.has(String(o[f]))) o[f] = renamed.get(String(o[f]));
         if (o.t === 'env') { if (focus !== 'setting') return; delete o.title; }
         else if (o.t === 'obj' && o.id != null && !had.has(String(o.id))) { const id = `${focus}_${o.id}`; renamed.set(String(o.id), id); o.id = id; }
         else if (o.t === 'many' && renamed.has(String(o.of))) o.of = renamed.get(String(o.of));
@@ -686,7 +692,7 @@ function tick() {
   } else if (sc?.status === 'done' && sc.imps?.some((i) => i.status !== 'over')) {
     const gen = sc.imps.find((i) => i.status === 'gen'), waiting = sc.imps.filter((i) => i.status === 'wait');
     if (gen) { cls = 'gen'; const secs = Math.max(0.05, (performance.now() - gen.genStart) / 1000); if (!gen.cached) big = `≈${Math.round(gen.chars / 1.85 / secs)}`; small = `${gen.cached ? '' : 'tokens/s · '}adding ${gen.focus}`; }
-    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · improving (${waiting.map((i) => i.focus).join(', ')})`; }
+    else { cls = 'wait'; big = `${Math.round((performance.now() - Math.min(...waiting.map((i) => i.t0))) / 1000)}s`; small = `in queue · ${waiting[0]?.focus === 'motion' ? 'adding motion' : `improving (${waiting.map((i) => i.focus).join(', ')})`}`; }
   } else if (sc?.status === 'done' && sc.done) {
     if (sc.cached) small = 'replayed from cache';
     else { big = `≈${sc.done.tps}`; small = `tokens/s · ${(sc.done.genMs / 1000).toFixed(1)}s`; tip = `${sc.lines.length} lines in ${(sc.done.genMs / 1000).toFixed(1)}s after ${(sc.done.waitMs / 1000).toFixed(0)}s in the queue`; }

@@ -21,7 +21,8 @@ obj — one thing built from primitives:
 - cyl and cone stand upright along y, cone tip up. torus lies flat; tilt it with rotation.
 - Use 4 to 12 parts and make the silhouette readable at a glance: an animal needs body, head, snout or beak, ears, legs, tail; a person needs legs, torso, arms, head, hair or hat; a house needs walls, roof, door, window.
 - Parts must touch or overlap so the object reads as one thing, and the lowest part must rest on y=0 unless the thing floats or flies.
-- ry (turn, degrees), s (scale) and anim are optional. anim is one of none, bob, sway, spin, hop, float, pulse, walk. Animate living things and things the text says are moving.
+- ry (turn, degrees), s (scale) and anim are optional. anim is an idle loop that shows the thing is alive: none, bob, sway, spin, hop, float, pulse, walk. It does not tell the story; act lines do (see Motion).
+- "step" and "in" are optional and say when and how the thing arrives (see Motion).
 - Add "ghost":true when strict is yes and the text names the thing without describing it (see Fidelity).
 
 many — repeat an earlier obj cheaply, for forests, crowds, rows of things:
@@ -33,15 +34,56 @@ label — floating text. At most two per scene, only for a proper name a shape a
 gap — something the writing does not let you draw:
 {"t":"gap","at":[x,z],"text":"max 3 words naming what is missing"}
 
+## Motion
+
+The scene is a short animation that loops, and the motion must explain the paragraph: a viewer who cannot hear the words should still follow what happens, what causes what, and what is bigger than what. A scene where everything just appears has failed.
+
+Time runs in steps. Step 0 is what is there before anything happens: the place and whoever is already in it. Steps 1, 2, 3 follow the paragraph's own order, one step for each thing that happens or each point it makes. Use 2 to 4 steps.
+
+An obj or many line can carry:
+- "step": the thing is not there at the start and arrives in this step. Use it for what the paragraph introduces later, the result of an action, or the answer to a question. The punchline arrives last.
+- "in": how it arrives. "pop" (default), "drop" falls from above (rain, a delivery, a verdict landing), "grow" rises out of the ground (a building, a plant, a bar in a chart), "left" or "right" slides in from that side (someone or something arriving).
+
+act — one motion in one step:
+{"t":"act","do":"move","id":"<obj id>","to":"<obj id>" or [x,z],"step":1}
+- move: the thing travels to another thing (it stops beside it) or to a point. Add "arc":2 to throw or jump it through the air, "y":3 to end up that high. For a person walking, a truck delivering, a file being sent.
+- flow: {"t":"act","do":"flow","of":"<id of a small obj>","from":"<id>" or [x,y,z],"to":"<id>" or [x,y,z],"n":5,"step":1} — a steady stream of copies of a small thing travelling from one place to another, for as long as the scene runs. This is how to show a process: water through a cooling system, data to a server, heat leaving, money changing hands, messages in a queue. Draw the small thing once as an obj (a droplet, a packet, a coin) and name it in "of"; or leave "of" out and give "color":"#hex" for plain dots. "arc":1.5 lifts the stream into a curve.
+- grow: {"t":"act","do":"grow","id":"<id>","k":2.5,"step":2} — the thing scales to k times its size (k below 1 shrinks it). For more, bigger, hotter, worse, or less. To compare two amounts, draw both the same size and grow one.
+- rise: {"t":"act","do":"rise","id":"<id>","h":3,"step":2} — the thing lifts off and fades out, again and again: steam, smoke, evaporation, heat, a signal going up.
+- shake: the thing trembles for that step: overload, error, strain, anger, an alarm.
+- flash: {"t":"act","do":"flash","id":"<id>","color":"#hex","step":1} — rings pulse out from under the thing: this is the one being talked about now.
+- vanish: the thing shrinks away: used up, removed, a claim that turns out false.
+- spin: one full turn: a mechanism working, a reveal.
+- look: {"t":"act","do":"look","id":"<id>","zoom":"close|wide","step":2} — the camera moves to frame that thing for the step. Use at most two, for the moment the paragraph zooms in on a detail.
+Every act may carry "dur" in seconds (default 1.3).
+
+count — a number that runs up or down in front of the viewer:
+{"t":"count","at":[x,y,z],"from":0,"to":1900,"text":"{n} prompts","step":3}
+- Use it whenever the paragraph gives a number that matters. The viewer watches it climb, which is what makes a number land. One or two per scene, placed above the thing it measures, y 2.5 to 4.5.
+
+How to choreograph:
+- Read the paragraph as a sequence of events or points, and give each one a step. A cause comes one step before its effect. In a comparison, show the first amount, then the second, then the difference.
+- 3 to 6 act and count lines per scene. Each one must show something the paragraph says. Never add motion for decoration.
+- Put act and count lines after the obj lines they refer to. "id", "of", "from" and "to" must name obj ids from your own output or the scene you were given.
+- If nothing in the paragraph happens or changes (a still description), use steps only to reveal things in the order they are described, and one flash or look on the thing that matters most.
+
+Example, for "The water goes to the cooling towers, where it evaporates and carries the heat away":
+{"t":"obj","id":"drop","at":[-2.4,1],"s":0.5,"parts":[["sphere",[0,0.3,0],[0.4,0.4,0.4],"#4aa8ff"],["cone",[0,0.6,0],[0.3,0.35,0.3],"#4aa8ff"]]}
+{"t":"obj","id":"steam","at":[2.5,0],"y":3.2,"step":2,"parts":[["sphere",[0,0,0],[0.9,0.6,0.9],"#eef3f8"],["sphere",[0.5,0.2,0],[0.7,0.5,0.7],"#ffffff"]]}
+{"t":"act","do":"flow","of":"drop","from":"racks","to":"tower","n":6,"arc":1.2,"step":1}
+{"t":"act","do":"flash","id":"tower","color":"#4aa8ff","step":1}
+{"t":"act","do":"rise","id":"steam","h":3,"step":2}
+{"t":"act","do":"look","id":"tower","zoom":"wide","step":2}
+
 ## Modes
 
 The request names a mode.
 
-diorama — a story scene. env first, then the main character or subject, then what they interact with, then setting, then background. 8 to 20 obj/many lines.
+diorama — a story scene. env first, then the main character or subject, then what they interact with, then setting, then background, then the motion. 8 to 20 obj/many lines and 3 to 6 act/count lines.
 
 storyboard — the paragraph is one beat of a short vertical video script. After env, output exactly one shot line, then draw what the viewer would see during that beat, framed for a tall phone screen (keep everything within x -4..4):
 {"t":"shot","beat":"hook|setup|proof|payoff|cta","cam":"wide|medium|close|low|top","sec":4,"text":"on-screen caption, max 5 words"}
-sec is how long the beat takes to say out loud at about 2.6 words a second. If the beat is a person talking to camera, draw the presenter and the thing they are talking about. 5 to 12 obj lines.
+sec is how long the beat takes to say out loud at about 2.6 words a second. If the beat is a person talking to camera, draw the presenter and the thing they are talking about. 5 to 12 obj lines, then 3 to 6 act/count lines that act the beat out. The steps are spread over the beat's "sec", so the motion keeps pace with the voice.
 
 diagram — the paragraph is engineering documentation. Do not draw scenery. After env (use "light":"indoor"), output nodes on a grid and edges between them:
 {"t":"node","id":"api","label":"API server","kind":"user|service|db|queue|worker|file|cloud|step|concept","col":0,"row":0}
@@ -66,6 +108,7 @@ Draw what the paragraph states or clearly implies. The scene is feedback on the 
 A request with "task: update" means the writer edited a paragraph whose scene is already on screen. You get the paragraph before the edit, the paragraph now, and the scene's lines. Change the scene to fit the paragraph as it is now, and output only the changes:
 
 - an obj line with an existing "id" to redraw a thing the edit changed (new colour, size, action, animation);
+- act and count lines for what now happens in the paragraph. An act that does the same thing to the same object in the same step replaces the old one; dropping an obj drops its acts;
 - new obj or many lines for things the edit added;
 - {"t":"drop","id":"<id>"} for a thing the paragraph no longer supports;
 - env again (all its fields) only when the title, place, time of day or mood changed;
@@ -83,7 +126,7 @@ A request with "task: improve" gives you the scene that is already on screen, as
 
 - To redraw a thing better, output an obj line with the same "id": it replaces the old one. Keep its "at" unless the placement was wrong. Give it 10 to 18 parts: add what makes it recognisable and charming (eyes, hands, feet, ears, handles, rims, windows, stripes, steam), fix parts that float or do not touch, and use two or three shades per object instead of one flat colour.
 - To add a thing, output an obj line with a new id, or a many line that repeats an obj from your own output or from the scene.
-- Never output shot, label, gap, node or edge lines, and never repeat a line that would change nothing.
+- Never output shot, label, gap, node or edge lines, and never repeat a line that would change nothing. Only the motion focus outputs act and count lines.
 - An improve pass may imagine. Drop "ghost" from anything you redraw and give it your best guess at real colours and detail, whatever strict says. Add the setting and props any reader would picture around the subject (the plate and steamer under a dumpling, the room a desk stands in). Never contradict the paragraph, and never add a new character or event.
 - Do not put anything on top of an existing object: read the "at" positions in the scene and use free ground.
 - In storyboard mode keep everything within x -4..4.
@@ -92,6 +135,7 @@ What each focus is for:
 - subject: redraw the main subject or subjects in full detail and colour, same ids. 1 to 4 obj lines and nothing else.
 - setting: the place around the subject. Start with an env line (all its fields) that gives the sky, ground and light a mood that fits, then 4 to 8 new obj or many lines: the surface things stand on and what the paragraph implies is nearby. Do not redraw existing objects.
 - background: depth and atmosphere, 4 to 8 new obj or many lines: distant things at negative z, things in the sky, and small animated props. Do not redraw existing objects and do not output env.
+- motion: choreograph the scene so its motion tells the paragraph (see Motion). Output 3 to 6 act and count lines. To make a thing arrive later, output its obj line again, unchanged except for an added "step" and "in". You may add up to two small new obj lines that the motion needs (a droplet or packet for a flow, steam to rise). Change nothing else: no env, no many, no redrawing for looks.
 - polish: look at the whole scene. Redraw the one or two things that still look weakest, and add two or three small details that tell the story.
 
 ## Colour

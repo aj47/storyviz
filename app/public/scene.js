@@ -1,4 +1,4 @@
-// 3D stage: draws scene lines (env, obj, many, label, gap, node, edge, shot) the moment
+// 3D stage: draws scene lines (env, obj, many, label, gap, node, edge, shot, act, count) the moment
 // they arrive, in whichever visual style is active. Restyling rebuilds from the stored lines.
 import * as THREE from 'three';
 
@@ -37,6 +37,13 @@ const NODE_KINDS = {
 
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2);
+const easeOut = (k) => 1 - (1 - k) ** 3;
+const bounce = (k) => { const n = 7.5625, d = 2.75; if (k < 1 / d) return n * k * k; if (k < 2 / d) return n * (k -= 1.5 / d) * k + 0.75; if (k < 2.5 / d) return n * (k -= 2.25 / d) * k + 0.9375; return n * (k -= 2.625 / d) * k + 0.984375; };
+const ENTERS = ['pop', 'drop', 'grow', 'left', 'right'];
+const ACTS = ['move', 'flow', 'grow', 'rise', 'shake', 'vanish', 'spin', 'flash', 'look'];
+// Two act lines are the same motion when they do the same thing to the same object in the same step.
+export const actKey = (o) => (o.t === 'count' ? `count|${JSON.stringify(o.at)}|${o.step || 0}` : `${o.do}|${o.id ?? ''}|${o.of ?? ''}|${JSON.stringify(o.from ?? '')}|${o.step || 0}`);
 const easeOutBack = (k) => { const c = 1.9; const x = clamp(k, 0, 1) - 1; return 1 + (c + 1) * x * x * x + c * x * x; };
 
 function color(hex, fallback = '#b8bcc6') {
@@ -93,9 +100,10 @@ export class Stage {
     if (!STYLES[name]) return;
     this.styleName = name; this.style = STYLES[name];
     this.matCache.clear();
-    const lines = this.lines; this._clearObjects(); this.lines = [];
+    const lines = this.lines, tl0 = this.tl0; this._clearObjects(); this.lines = [];
     this._applyEnv(this.env || {});
     for (const l of lines) this.addLine(l, false);
+    this.tl0 = tl0; // a new style keeps the story where it was
   }
   clear() { this._clearObjects(); this.lines = []; this.env = null; this._applyEnv({}); this.setMode(this.mode); }
   load(lines, pop = false) { this.clear(); lines.forEach((l, i) => this.addLine(l, pop, i * 45)); }
@@ -106,9 +114,12 @@ export class Stage {
   upsert(o, pop = true) {
     if (!o || typeof o !== 'object') return;
     const id = o.t === 'obj' && o.id != null ? String(o.id) : null;
+    const motion = o.t === 'act' || o.t === 'count';
     const at = id && this.groups.has(id) ? this.lines.findIndex((l) => l.t === 'obj' && String(l.id) === id)
-      : o.t === 'env' || o.t === 'shot' ? this.lines.findIndex((l) => l.t === o.t) : -1;
+      : o.t === 'env' || o.t === 'shot' ? this.lines.findIndex((l) => l.t === o.t)
+      : motion ? this.lines.findIndex((l) => l.t === o.t && actKey(l) === actKey(o)) : -1;
     if (id && this.groups.has(id)) this._remove([this.groups.get(id)]);
+    if (motion && at >= 0) this._dropMotion((m) => m.key === actKey(o));
     this.addLine(o, pop);
     // Keep the line in its old place, so a later restyle still meets each obj before the many that repeats it.
     if (at >= 0) { this.lines.pop(); this.lines[at] = o; }
@@ -126,7 +137,9 @@ export class Stage {
         case 'gap': this._addGap(o, pop, delay); break;
         case 'node': this._addNode(o, pop, delay); break;
         case 'edge': this._addEdge(o); break;
-        case 'shot': this.shotCam = o.cam || 'medium'; this._reframe(); this.hooks.onShot?.(o); break;
+        case 'act': this._addAct(o, pop); break;
+        case 'count': this._addCount(o, pop); break;
+        case 'shot': this.shotSec = num(o.sec); this.shotCam = o.cam || 'medium'; this._reframe(); this.hooks.onShot?.(o); break;
         default: break;
       }
     } catch (e) { console.warn('bad scene line', o, e); }
@@ -137,17 +150,24 @@ export class Stage {
     id = String(id);
     this._remove([this.groups.get(id), ...(this.copies.get(id) || [])].filter(Boolean));
     this.groups.delete(id); this.copies.delete(id); this.defs.delete(id);
-    this.lines = this.lines.filter((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id)));
+    const uses = (l) => l.t === 'act' && [l.id, l.of, l.from, l.to].some((r) => typeof r === 'string' && r === id);
+    this._dropMotion((m) => uses(m.o));
+    this.lines = this.lines.filter((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id) || uses(l)));
   }
   _remove(groups) {
     for (const g of groups) g.parent?.remove(g);
-    this.anims = this.anims.filter((a) => !groups.includes(a.g)); this.pops = this.pops.filter((p) => !groups.includes(p.g));
+    this.actors = this.actors.filter((a) => !groups.includes(a.g));
+  }
+  _dropMotion(test) {
+    for (const m of [...this.acts, ...this.counts]) if (test(m)) (m.parts || [m.ring, m.sp]).forEach((x) => x?.parent?.remove(x));
+    this.acts = this.acts.filter((m) => !test(m)); this.counts = this.counts.filter((m) => !test(m));
   }
 
   // ---------- internals ----------
   _resetState() {
     this.defs = new Map(); this.groups = new Map(); this.copies = new Map(); this.nodes = new Map(); this.pendingEdges = [];
-    this.anims = []; this.pops = []; this.pulses = []; this.disposables = []; this.count = 0;
+    this.actors = []; this.acts = []; this.counts = []; this.maxStep = 0; this.tl0 = performance.now(); this.shotSec = 0; this.lookNow = undefined;
+    this.pulses = []; this.disposables = []; this.count = 0;
     this.focusBox = new THREE.Box3(); this.focusN = 0; this.shotCam = null;
     this.diagramTarget = new THREE.Vector3();
   }
@@ -280,13 +300,17 @@ export class Stage {
     return g;
   }
 
-  _place(g, x, z, ry, s, anim, pop, delay, parent = this.root) {
+  _place(g, x, z, ry, s, anim, pop, delay, parent = this.root, o = {}) {
     g.position.set(clamp(num(x), -16, 16), 0, clamp(num(z), -16, 16));
     g.rotation.y = num(ry) * D2R;
     const sc = clamp(num(s, 1), 0.05, 12);
     g.userData = { x: g.position.x, z: g.position.z, ry: g.rotation.y, s: sc };
-    if (pop) { g.scale.setScalar(0.0001); this.pops.push({ g, t0: performance.now() + delay, s: sc }); } else g.scale.setScalar(sc);
-    if (anim && anim !== 'none') this.anims.push({ g, type: anim, ph: Math.random() * 6.28 });
+    // An actor is a thing on stage and everything that moves it: how it comes in, the step of the story it
+    // comes in at, and its idle loop. Its place each frame is worked out from the story clock in _animate.
+    const a = { g, anim: anim && anim !== 'none' ? anim : null, ph: Math.random() * 6.28, born: pop ? performance.now() + delay : -1e9,
+      step: clamp(Math.round(num(o.step)), 0, 8), enter: ENTERS.includes(o.in) ? o.in : 'pop' };
+    g.userData.actor = a; this.actors.push(a); this._step(a.step, pop);
+    g.scale.setScalar(pop || a.step ? 0.0001 : sc);
     parent.add(g); this.count++;
     return g;
   }
@@ -295,7 +319,7 @@ export class Stage {
     const at = Array.isArray(o.at) ? o.at : [0, 0];
     const g = this._group(o.parts, Boolean(o.ghost));
     if (o.y) g.children.forEach((c) => { c.position.y += num(o.y); });
-    this._place(g, at[0], at.length > 2 ? at[2] : at[1], o.ry, o.s, o.anim, pop, delay);
+    this._place(g, at[0], at.length > 2 ? at[2] : at[1], o.ry, o.s, o.anim, pop, delay, this.root, o);
     if (o.id != null) this.groups.set(String(o.id), g);
     this._focus(g);
   }
@@ -313,19 +337,161 @@ export class Stage {
   }
   _reframe() {
     if (this.mode === 'diagram' || this.focusBox.isEmpty()) return;
-    const size = this.focusBox.getSize(new THREE.Vector3()), c = this.focusBox.getCenter(new THREE.Vector3());
+    this.lookNow = undefined;
+    this._frameBox(this.focusBox, this.mode === 'storyboard' ? (SHOT_ZOOM[this.shotCam] ?? 1.05) : 1.12);
+  }
+  _frameBox(box, zoom) {
+    const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
     const t = Math.tan((this.camera.fov * D2R) / 2);
     const asp = this.mode === 'storyboard' ? Math.min(this.camera.aspect, 9 / 16) : this.camera.aspect;
-    const zoom = this.mode === 'storyboard' ? (SHOT_ZOOM[this.shotCam] ?? 1.05) : 1.12;
     const r = clamp(Math.max((size.x / 2) / (t * asp), (size.y / 2) / t) * 1.25 * zoom + size.z / 2 + 1.5, 4.5, 30);
     this.camT = { r, phi: SHOT_PHI[this.shotCam] ?? 72, y: clamp(c.y, 0.5, 6), x: clamp(c.x, -9, 9), z: clamp(c.z, -9, 9) };
+  }
+
+  // ---------- motion ----------
+  // The story runs on a clock of steps. Step 0 is what is there from the start; things and motions with a
+  // later step wait their turn, so the picture unfolds in the order the paragraph tells it, then loops.
+  _step(step, live) { if (step > this.maxStep) this.maxStep = step; if (live && step) this.tl0 = performance.now(); }
+  _clock(now) {
+    if (!this.maxStep) return { tt: 0, rw: 0, D: 1.8 };
+    const D = this.shotSec ? clamp(this.shotSec / (this.maxStep + 1), 1.3, 3) : 1.8, total = (this.maxStep + 1) * D + 2.2;
+    const tt = ((now - this.tl0) / 1000) % total;
+    // The last moments of a loop wind everything back, so the restart is a motion too and not a cut.
+    return { tt, D, rw: easeInOut(clamp((tt - (total - 0.8)) / 0.7, 0, 1)) };
+  }
+  // A place named by an object id, or given as [x,z] or [x,y,z]. For an object, y is a point inside its body.
+  _point(ref) {
+    if (Array.isArray(ref)) return ref.length > 2 ? { x: num(ref[0]), y: num(ref[1]), z: num(ref[2]) } : { x: num(ref[0]), y: 0, z: num(ref[1]) };
+    const g = this.groups.get(String(ref)); if (!g) return null;
+    const u = g.userData, st = u.actor?.st;
+    if (u.h == null) { const keep = g.scale.clone(); g.scale.setScalar(u.s); g.updateMatrixWorld(true); const b = new THREE.Box3().setFromObject(g); g.scale.copy(keep); u.h = b.isEmpty() ? 1 : clamp(b.max.y, 0.2, 8); }
+    return { x: st ? st.x : u.x, y: (st ? st.y : 0) + u.h * 0.6, z: st ? st.z : u.z, body: true, g };
+  }
+  _addAct(o, pop) {
+    if (!ACTS.includes(o.do)) return;
+    const c = { o, key: actKey(o), do: o.do, id: o.id != null ? String(o.id) : null, step: clamp(Math.round(num(o.step, 1)), 0, 8), dur: clamp(num(o.dur, 1.3), 0.3, 6) };
+    if (c.do === 'flow') {
+      const def = this.defs.get(String(o.of)), n = clamp(Math.round(num(o.n, 5)), 1, 12);
+      c.parts = Array.from({ length: n }, () => { const g = this._group(def ? def.parts : [['sphere', [0, 0, 0], [0.26, 0.26, 0.26], typeof o.color === 'string' ? o.color : '#6ec5ff']], false); g.visible = false; this.root.add(g); return g; });
+      c.s = clamp(num(def?.s, 1) * num(o.s, 1), 0.05, 6);
+      // A stream has to be seen from across the stage, so its pieces are never smaller than a fist.
+      const size = new THREE.Box3().setFromObject(c.parts[0]).getSize(new THREE.Vector3()), big = Math.max(size.x, size.y, size.z) || 0.26;
+      c.s = clamp(c.s, 0.42 / big, 0.9 / big); c.arc = clamp(num(o.arc), 0, 6); c.dur = clamp(num(o.dur, 2.2), 0.6, 8);
+    } else if (c.do === 'flash') {
+      const mat = new THREE.MeshBasicMaterial({ color: color(o.color, '#ffd24a'), transparent: true, depthWrite: false, fog: false });
+      const geo = new THREE.TorusGeometry(0.5, 0.035, 8, 48); geo.rotateX(Math.PI / 2);
+      c.ring = new THREE.Mesh(geo, mat); c.ring.visible = false; this.root.add(c.ring); this.disposables.push(geo, mat);
+    }
+    this.acts.push(c); this.acts.sort((a, b) => a.step - b.step); this._step(c.step, pop);
+  }
+  // A number that counts up (or down) in front of the viewer, like "1,900 prompts per bottle".
+  _addCount(o, pop) {
+    const at = Array.isArray(o.at) ? o.at : [0, 3, 0], from = num(o.from), to = num(o.to, 1);
+    const dec = Math.min(2, Math.max(...[from, to].map((v) => (String(v).split('.')[1] || '').length)));
+    const fmt = (v) => { const n = v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec }); const t = String(o.text || '{n}').slice(0, 36); return t.includes('{n}') ? t.replace('{n}', n) : `${n} ${t}`; };
+    const fs = 54, pad = 26, cv = document.createElement('canvas'); let ctx = cv.getContext('2d');
+    ctx.font = `800 ${fs}px Inter, system-ui, sans-serif`;
+    cv.width = Math.ceil(Math.max(ctx.measureText(fmt(from)).width, ctx.measureText(fmt(to)).width)) + pad * 2; cv.height = fs + pad * 1.4; ctx = cv.getContext('2d');
+    const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, fog: false });
+    const sp = new THREE.Sprite(mat); sp.renderOrder = 11; sp.visible = false;
+    sp.position.set(clamp(num(at[0]), -14, 14), clamp(num(at[1], 3), 0.4, 14), clamp(num(at[2]), -14, 14));
+    const draw = (text) => {
+      ctx.clearRect(0, 0, cv.width, cv.height); ctx.font = `800 ${fs}px Inter, system-ui, sans-serif`;
+      ctx.fillStyle = 'rgba(14,17,26,0.86)'; ctx.beginPath(); ctx.roundRect(0, 0, cv.width, cv.height, cv.height / 2); ctx.fill();
+      ctx.fillStyle = '#ffd24a'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.fillText(text, cv.width / 2, cv.height / 2 + 2); tex.needsUpdate = true;
+    };
+    this.root.add(sp); this.disposables.push(tex, mat);
+    const c = { o, key: actKey(o), sp, draw, fmt, from, to, w: cv.width / cv.height, step: clamp(Math.round(num(o.step, 1)), 0, 8), dur: clamp(num(o.dur, 1.6), 0.3, 6), shown: null };
+    this.counts.push(c); this._step(c.step, pop);
+  }
+  _animate(t, now) {
+    const { tt, D, rw } = this._clock(now);
+    for (const a of this.actors) {
+      const u = a.g.userData, st = a.st = { x: u.x, y: 0, z: u.z, s: u.s, sy: 1, ry: u.ry, rz: 0, show: true, moving: false };
+      let k = clamp((now - a.born) / 480, 0, 1);
+      if (a.step) k = Math.min(k, clamp((tt - a.step * D) / 0.6, 0, 1)) * (1 - rw);
+      if (k <= 0) st.show = false;
+      else if (k < 1) {
+        if (a.enter === 'drop') { st.y += (1 - bounce(k)) * 7; st.s *= Math.min(1, k * 6); }
+        else if (a.enter === 'grow') st.sy = Math.max(0.001, easeOut(k));
+        else if (a.enter === 'left' || a.enter === 'right') { st.x += (a.enter === 'left' ? -1 : 1) * (1 - easeOut(k)) * 12; st.s *= Math.min(1, k * 6); }
+        else st.s *= Math.max(0.0001, easeOutBack(k));
+      }
+    }
+    let look = null;
+    for (const c of this.acts) {
+      const live = tt - c.step * D, raw = clamp(live / c.dur, 0, 1), k = raw * (1 - rw), e = easeInOut(k);
+      if (c.do === 'look') { if (live >= 0 && rw < 0.5 && this.maxStep) look = c; continue; }
+      if (c.do === 'flow') {
+        const A = this._point(c.o.from), B = this._point(c.o.to), n = c.parts.length;
+        c.parts.forEach((g, i) => {
+          const local = live - (i * c.dur) / n; g.visible = Boolean(A && B) && local >= 0 && rw < 1;
+          if (!g.visible) return;
+          const kk = (local / c.dur) % 1;
+          g.position.set(A.x + (B.x - A.x) * kk, A.y + (B.y - A.y) * kk + Math.sin(Math.PI * kk) * c.arc, A.z + (B.z - A.z) * kk);
+          g.scale.setScalar(Math.max(0.0001, c.s * Math.sin(Math.PI * kk) ** 0.5 * (1 - rw)));
+        });
+        continue;
+      }
+      const groups = [this.groups.get(c.id), ...(c.do === 'move' ? [] : this.copies.get(c.id) || [])];
+      for (const g of groups) {
+        const st = g?.userData.actor?.st; if (!st) continue;
+        if (c.do === 'move') {
+          const to = this._point(c.o.to); if (!to || to.g === g) continue;
+          let tx = to.x, tz = to.z;
+          // Going to another thing means arriving next to it, not inside it.
+          if (to.body) { const dx = tx - st.x, dz = tz - st.z, len = Math.hypot(dx, dz) || 1, gap = Math.min(1.2, len * 0.4); tx -= (dx / len) * gap; tz -= (dz / len) * gap; }
+          st.x += (tx - st.x) * e; st.z += (tz - st.z) * e; st.y += num(c.o.y) * e + Math.sin(Math.PI * k) * clamp(num(c.o.arc), 0, 8);
+          st.moving = raw > 0 && raw < 1;
+        } else if (c.do === 'grow') st.s *= 1 + (clamp(num(c.o.k, 2), 0.1, 6) - 1) * e;
+        else if (c.do === 'vanish') st.s *= Math.max(0.0001, 1 - e);
+        else if (c.do === 'spin') st.ry += e * Math.PI * 2 * clamp(num(c.o.turns, 1), 0.25, 4);
+        else if (c.do === 'shake') { if (raw > 0 && raw < 1) { st.x += Math.sin(t * 46) * 0.05 * st.s; st.rz += Math.sin(t * 39) * 0.05; } }
+        else if (c.do === 'rise') { if (live >= 0) { const kk = (live / c.dur) % 1; st.y += clamp(num(c.o.h, 2.5), 0.3, 10) * kk * (1 - rw); st.s *= Math.max(0.0001, Math.sin(Math.PI * kk) ** 0.6); } }
+        else if (c.do === 'flash' && g === groups[0]) {
+          const on = raw > 0 && raw < 1; c.ring.visible = on && st.show;
+          if (on) { const kk = (raw * 2) % 1; c.ring.position.set(st.x, 0.06, st.z); c.ring.scale.setScalar((0.8 + 2.6 * kk) * Math.max(1, st.s)); c.ring.material.opacity = 1 - kk; st.s *= 1 + 0.1 * Math.sin(Math.PI * raw * 4) ** 2; }
+        }
+      }
+    }
+    // The camera follows the story: a look act frames one thing for its step, then the view goes back.
+    if (look !== (this.lookNow ?? null) && this.mode !== 'diagram') {
+      const g = look && this.groups.get(look.id);
+      if (g) { const keep = g.scale.clone(); g.scale.setScalar(g.userData.s); g.updateMatrixWorld(true); const b = new THREE.Box3().setFromObject(g); g.scale.copy(keep); if (!b.isEmpty()) this._frameBox(b, look.o.zoom === 'close' ? 1.1 : 1.6); this.lookNow = look; }
+      else { this._reframe(); this.lookNow = null; }
+    }
+    for (const a of this.actors) {
+      const g = a.g, st = a.st, s = g.userData.s;
+      if (a.anim === 'bob') st.y += 0.1 * s * (1 + Math.sin(t * 2.2 + a.ph));
+      else if (a.anim === 'sway') st.rz += 0.07 * Math.sin(t * 1.4 + a.ph);
+      else if (a.anim === 'spin') st.ry += t * 1.3;
+      else if (a.anim === 'hop') st.y += Math.abs(Math.sin(t * 3.2 + a.ph)) * 0.4 * s;
+      else if (a.anim === 'float') st.y += 0.9 + 0.3 * Math.sin(t * 1.1 + a.ph);
+      else if (a.anim === 'float0') st.y += 0.12 + 0.1 * Math.sin(t * 1.6 + a.ph);
+      else if (a.anim === 'pulse') st.s *= 1 + 0.07 * Math.sin(t * 3.4 + a.ph);
+      else if (a.anim === 'walk') {
+        // A walker with somewhere to go walks there; one without wanders on the spot.
+        const going = this.acts.some((c) => c.do === 'move' && this.groups.get(c.id) === g);
+        if (!going) { const k = Math.sin(t * 0.8 + a.ph); st.x += k * 1.4; st.ry += Math.cos(t * 0.8 + a.ph) >= 0 ? 0 : Math.PI; }
+        if (!going || st.moving) st.y += Math.abs(Math.sin(t * 5 + a.ph)) * 0.08 * s;
+      }
+      if (st.moving && a.anim !== 'walk' && a.anim !== 'float') st.y += Math.abs(Math.sin(t * 7 + a.ph)) * 0.05 * s;
+      g.visible = st.show; g.position.set(st.x, st.y, st.z); g.rotation.y = st.ry; g.rotation.z = st.rz; g.scale.set(st.s, st.s * st.sy, st.s);
+    }
+    for (const c of this.counts) {
+      const live = tt - c.step * D, k = clamp(live / c.dur, 0, 1), inK = clamp(live / 0.35, 0, 1) * (1 - rw);
+      c.sp.visible = inK > 0; if (!c.sp.visible) continue;
+      const text = c.fmt(c.from + (c.to - c.from) * easeOut(k)); if (text !== c.shown) { c.shown = text; c.draw(text); }
+      const h = clamp(num(c.o.size, 0.95), 0.4, 2) * easeOutBack(inK); c.sp.scale.set(h * c.w, h, 1);
+    }
   }
   _addMany(o, pop, delay) {
     const def = this.defs.get(String(o.of)); if (!def || !Array.isArray(o.at)) return;
     o.at.slice(0, 60).forEach((a, i) => {
       if (!Array.isArray(a)) return;
       const g = this._group(def.parts, Boolean(def.ghost));
-      this._place(g, a[0], a[1], a[3] ?? (i * 73) % 360, num(def.s, 1) * num(a[2], 1), def.anim, pop, delay + i * 35);
+      this._place(g, a[0], a[1], a[3] ?? (i * 73) % 360, num(def.s, 1) * num(a[2], 1), def.anim, pop, delay + i * 35, this.root, { step: o.step ?? def.step, in: o.in ?? def.in });
       const of = String(o.of); if (!this.copies.has(of)) this.copies.set(of, []);
       this.copies.get(of).push(g);
     });
@@ -447,21 +613,7 @@ export class Stage {
     this.camera.position.set(this.cam.x + r * Math.sin(phi) * Math.sin(theta), this.cam.y + r * Math.cos(phi), this.cam.z + r * Math.sin(phi) * Math.cos(theta));
     this.camera.lookAt(this.cam.x, this.cam.y, this.cam.z);
     this.diagram.position.lerp(this.diagramTarget, 0.08);
-    this.pops = this.pops.filter((p) => {
-      const k = (now - p.t0) / 480; if (k < 0) return true;
-      p.g.scale.setScalar(Math.max(0.0001, p.s * easeOutBack(k))); return k < 1;
-    });
-    for (const a of this.anims) {
-      const g = a.g, u = g.userData, s = u.s;
-      if (a.type === 'bob') g.position.y = 0.1 * s * (1 + Math.sin(t * 2.2 + a.ph));
-      else if (a.type === 'sway') g.rotation.z = 0.07 * Math.sin(t * 1.4 + a.ph);
-      else if (a.type === 'spin') g.rotation.y = u.ry + t * 1.3;
-      else if (a.type === 'hop') g.position.y = Math.abs(Math.sin(t * 3.2 + a.ph)) * 0.4 * s;
-      else if (a.type === 'float') g.position.y = 0.9 + 0.3 * Math.sin(t * 1.1 + a.ph);
-      else if (a.type === 'float0') g.position.y = 0.12 + 0.1 * Math.sin(t * 1.6 + a.ph);
-      else if (a.type === 'pulse') { if (!this.pops.some((p) => p.g === g)) g.scale.setScalar(s * (1 + 0.07 * Math.sin(t * 3.4 + a.ph))); }
-      else if (a.type === 'walk') { const k = Math.sin(t * 0.8 + a.ph); g.position.x = u.x + k * 1.4; g.position.y = Math.abs(Math.sin(t * 5 + a.ph)) * 0.08 * s; g.rotation.y = u.ry + (Math.cos(t * 0.8 + a.ph) >= 0 ? 0 : Math.PI); }
-    }
+    this._animate(t, now);
     for (const p of this.pulses) p.pulse.position.copy(p.curve.getPoint((t * 0.45 + p.ph) % 1));
     this.renderer.render(this.scene, this.camera);
   }

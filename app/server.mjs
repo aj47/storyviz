@@ -465,7 +465,7 @@ function sceneRequest(b) {
   }
   if (b.guide) parts.push(`direction from the writer:\n"""\n${String(b.guide).slice(0, 300)}\n"""`);
   if (b.improve) {
-    parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish'].includes(b.focus) ? b.focus : 'polish'}`);
+    parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish', 'motion'].includes(b.focus) ? b.focus : 'polish'}`);
     parts.push(`scene on screen now:\n${String(b.scene || '').slice(0, 24000)}`);
   }
   return parts.join('\n\n');
