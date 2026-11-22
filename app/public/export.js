@@ -29,6 +29,37 @@ export function drawCaption(ctx, text, W, H, pos = {}, size) {
   ctx.restore();
 }
 
+// One finished frame: the sky painted behind the stage, the style's filter, pixels and vignette, then the words.
+function composite(ctx, stage, gl, W, H, sc) {
+  const [top, hor] = stage.sky, g = ctx.createLinearGradient(0, 0, 0, H), post = stage.post;
+  g.addColorStop(0, top); g.addColorStop(0.62, hor); g.addColorStop(1, hor);
+  ctx.filter = post.filter || 'none';
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.imageSmoothingEnabled = post.pixel <= 1; // chunky pixels stay sharp when scaled up
+  ctx.drawImage(gl, 0, 0, W, H);
+  ctx.filter = 'none'; ctx.imageSmoothingEnabled = true;
+  if (post.vignette) {
+    const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);
+    v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, `rgba(0,0,0,${post.vignette})`); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  }
+  if (sc.caption) drawCaption(ctx, sc.caption, W, H, sc.capPos, sc.capSize);
+}
+
+// A still of one scene, drawn exactly as the export will draw it, for the preview before exporting.
+export async function renderStill({ scene, mode, style, size, at = 0.6 }) {
+  const [W, H] = size;
+  await document.fonts?.ready;
+  const stage = new Stage(document.createElement('div'), {}, { size: [W, H] });
+  try {
+    stage.setMode(mode); stage.setStyle(style); stage.loadForExport(scene.lines, scene.sec);
+    // Play up to the moment shown, so the camera has settled and stepped things have come in.
+    const T = scene.sec * at * 1000; for (let ms = 0; ms < T; ms += 50) stage.renderAt(ms);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    composite(cv.getContext('2d'), stage, stage.renderAt(T), W, H, scene);
+    return cv;
+  } finally { stage.renderer.dispose(); stage.renderer.forceContextLoss(); }
+}
+
 // scenes: [{ lines, sec, caption, capPos, capSize }]. Resolves to an MP4 Blob.
 export async function exportVideo({ scenes, mode, style, size, fps = 30, onFrame, signal }) {
   const [W, H] = size;
@@ -51,18 +82,7 @@ export async function exportVideo({ scenes, mode, style, size, fps = 30, onFrame
       for (let f = 0; f < frames; f++) {
         if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
         const gl = stage.renderAt((f / fps) * 1000);
-        const [top, hor] = stage.sky, g = ctx.createLinearGradient(0, 0, 0, H), post = stage.post;
-        g.addColorStop(0, top); g.addColorStop(0.62, hor); g.addColorStop(1, hor);
-        ctx.filter = post.filter || 'none';
-        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-        ctx.imageSmoothingEnabled = post.pixel <= 1; // chunky pixels stay sharp when scaled up
-        ctx.drawImage(gl, 0, 0, W, H);
-        ctx.filter = 'none'; ctx.imageSmoothingEnabled = true;
-        if (post.vignette) {
-          const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);
-          v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, `rgba(0,0,0,${post.vignette})`); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
-        }
-        if (sc.caption) drawCaption(ctx, sc.caption, W, H, sc.capPos, sc.capSize);
+        composite(ctx, stage, gl, W, H, sc);
         await source.add(n / fps, 1 / fps);
         n++;
         onFrame?.({ n, total, scene: si, canvas: frame });

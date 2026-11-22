@@ -1,5 +1,5 @@
 import { Stage, STYLES, STYLE_ORDER, actKey, FX, ACTS, registerStyle, unregisterStyle } from './scene.js';
-import { exportVideo, CAPTION } from './export.js';
+import { exportVideo, renderStill, CAPTION } from './export.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -78,6 +78,7 @@ async function boot() {
   if (q.get('p')) { const p = S.paras[Number(q.get('p')) - 1]; if (p) { ta.setSelectionRange(p.start, p.start); moved(true); } }
   if (q.get('tab')) setTab(q.get('tab'));
   if (q.get('view')) setView(q.get('view'));
+  if (q.has('export')) openExport();
   if (q.has('projects')) showProjects();
   setInterval(() => { if (S.restyle && !document.hidden) setStyle(S.styleIdx + 1); }, 7000);
   setInterval(tick, 250);
@@ -909,6 +910,18 @@ function renderExportSum() {
   $('#exportSum').textContent = `${x.list.length} scene${x.list.length === 1 ? '' : 's'} · ${fmtSec(x.total)} · ${x.W}×${x.H} · ${STYLES[STYLE_ORDER[S.styleIdx]].label} style`
     + (x.missing.length ? `. Not drawn yet, so left out: scene${x.missing.length === 1 ? '' : 's'} ${x.missing.map((i) => i + 1).join(', ')}.` : '.');
   const pv = $('#exportPreview'); pv.width = x.W > x.H ? 480 : 216; pv.height = Math.round((pv.width * x.H) / x.W);
+  paintExportPreview(x);
+}
+// Before the export starts the preview shows a still of the scene on screen (or the first drawn one), as it will be exported.
+let previewSeq = 0;
+async function paintExportPreview(x) {
+  const seq = ++previewSeq, pv = $('#exportPreview'), i = x.list.includes(S.cur) ? S.cur : x.list[0];
+  if (i == null || S.exporting) return;
+  const sc = sceneFor(i), scene = { lines: sc.lines, sec: lengthOf(i), caption: S.pack.visual === 'storyboard' ? captionOf(sc) : '', capPos: sc.capPos, capSize: sc.capSize };
+  try {
+    const still = await renderStill({ scene, mode: S.pack.visual, style: STYLE_ORDER[S.styleIdx], size: [pv.width * 2, pv.height * 2] });
+    if (seq === previewSeq && !S.exporting) pv.getContext('2d').drawImage(still, 0, 0, pv.width, pv.height);
+  } catch (e) { console.warn('preview failed', e); }
 }
 function openExport() {
   if (S.exporting) { $('#exportDlg').showModal(); return; }
