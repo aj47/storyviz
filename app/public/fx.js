@@ -147,6 +147,29 @@ class Lightning extends Effect {
   }
 }
 
+// Triangles of an object's visible parts in world space, weighted by area, to pick points on its surface.
+function surfaceOf(g) {
+  const tris = []; let total = 0; const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  g.updateWorldMatrix(true, true);
+  for (const m of g.children) {
+    if (!m.isMesh || m.isInstancedMesh || m.userData.halo || !m.geometry?.attributes.position) continue;
+    const pos = m.geometry.attributes.position, idx = m.geometry.index, n = idx ? idx.count : pos.count;
+    const step = Math.max(3, Math.floor(n / 3 / 60) * 3); // a sample of at most ~60 triangles per part
+    for (let i = 0; i + 2 < n; i += step) {
+      const [i0, i1, i2] = idx ? [idx.getX(i), idx.getX(i + 1), idx.getX(i + 2)] : [i, i + 1, i + 2];
+      a.fromBufferAttribute(pos, i0).applyMatrix4(m.matrixWorld); b.fromBufferAttribute(pos, i1).applyMatrix4(m.matrixWorld); c.fromBufferAttribute(pos, i2).applyMatrix4(m.matrixWorld);
+      const area = b.clone().sub(a).cross(c.clone().sub(a)).length() / 2; if (area < 1e-5) continue;
+      total += area; tris.push([a.clone(), b.clone(), c.clone(), total]);
+    }
+  }
+  return tris.length ? { tris, total } : null;
+}
+function pickOnSurface({ tris, total }, r) {
+  const x = r() * total; const t = tris.find((q) => q[3] >= x) || tris[tris.length - 1];
+  let u = r(), v = r(); if (u + v > 1) { u = 1 - u; v = 1 - v; }
+  return t[0].clone().addScaledVector(t[1].clone().sub(t[0]), u).addScaledVector(t[2].clone().sub(t[0]), v);
+}
+
 class Electric extends Effect {
   get defaultColor() { return '#7df9ff'; }
   constructor(stage, o, key) {
@@ -163,14 +186,18 @@ class Electric extends Effect {
     if (sig !== this.built) {
       this.built = sig; const paths = [], r = seeded(this.seed, tick), s = T.size, b = T.box, big = Math.max(s.x, s.y, s.z, 0.4);
       // Arcs crawl over the surface of the thing, from one spot on it to a nearby one.
-      const onSurface = () => {
+      // Arcs crawl over the thing's own faces, from one spot on it to another spot near it.
+      const onBox = () => {
         const p = new THREE.Vector3(b.min.x + r() * s.x, b.min.y + r() * s.y, b.min.z + r() * s.z), axis = Math.floor(r() * 3), side = r() < 0.5 ? 'min' : 'max';
-        p.setComponent(axis, b[side].getComponent(axis) + (side === 'min' ? -1 : 1) * 0.04 * big); return p;
+        p.setComponent(axis, b[side].getComponent(axis)); return p;
       };
-      for (let i = 0; i < this.n; i++) {
-        const A = onSurface(), B = A.clone().add(new THREE.Vector3(r() - 0.5, r() - 0.5, r() - 0.5).normalize().multiplyScalar(big * (0.3 + r() * 0.35)));
-        B.clamp(b.min.clone().subScalar(0.15 * big), b.max.clone().addScalar(0.15 * big));
-        paths.push([jag(A, B, r, 0.22, 4), 0.6]);
+      const tris = T.g ? surfaceOf(T.g) : null;
+      const onSurface = () => (tris ? pickOnSurface(tris, r) : onBox());
+      for (let i = 0, n = this.o.n != null ? this.n : clamp(Math.round(2 + big / 1.5), 3, 6); i < n; i++) {
+        const A = onSurface(); let B = onSurface();
+        for (let k = 0; k < 4 && A.distanceTo(B) > big * 0.6; k++) B = onSurface();
+        if (A.distanceTo(B) < big * 0.12) B.add(new THREE.Vector3(r() - 0.5, r() - 0.5, r() - 0.5).multiplyScalar(big * 0.3));
+        paths.push([jag(A, B, r, 0.3, 4), 0.42]);
       }
       boltLayers(paths, clamp(num(this.o.w, 1), 0.3, 3)).forEach((g, i) => { this.layers[i].geometry.dispose(); this.layers[i].geometry = g; });
     }
@@ -281,7 +308,7 @@ class Beam extends Effect {
   constructor(stage, o, key) {
     super(stage, o, key);
     this.w = clamp(num(o.w, 0.2), 0.03, 4); const spread = clamp(num(o.spread, 1), 0.2, 12);
-    const geo = new THREE.CylinderGeometry(spread, 1, 1, 24, 1, true); geo.translate(0, 0.5, 0);
+    const geo = new THREE.CylinderGeometry(spread * 0.5, 0.5, 1, 24, 1, true); geo.translate(0, 0.5, 0);
     this.layers = [[new THREE.Color('#ffffff'), 0.28, 0.95], [this.color, 1, 0.5], [this.color, 1.9, 0.1]].map(([c, w, op]) => {
       const m = noRay(new THREE.Mesh(geo, glowBlend(new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide }), op))); m.userData.w = w; m.userData.op = op; this.group.add(m); return m;
     });
@@ -289,14 +316,14 @@ class Beam extends Effect {
     this.q = new THREE.Quaternion();
   }
   update(f) {
-    const A = this.stage.fxPoint(this.o.from ?? this.o.id, 'center'), B = this.stage.fxPoint(this.o.to, 'center');
+    const A = this.stage.fxPoint(this.o.from ?? this.o.id, 'upper'), B = this.stage.fxPoint(this.o.to, 'center');
     if (!A || !B || f.live < 0 || f.rw >= 1) { this.group.visible = false; return; }
     this.group.visible = true;
     const a = new THREE.Vector3(A.x, A.y, A.z), d = new THREE.Vector3(B.x, B.y, B.z).sub(a), len = d.length() || 0.01, k = clamp(f.live / 0.35, 0, 1) * (1 - f.rw);
     this.q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
     const shimmer = 1 + 0.06 * Math.sin(f.live * 40);
     for (const m of this.layers) { m.position.copy(a); m.quaternion.copy(this.q); m.scale.set(this.w * m.userData.w * shimmer, len * k, this.w * m.userData.w * shimmer); m.material.opacity = m.userData.op * (k > 0 ? 1 : 0); }
-    this.end.position.copy(a).addScaledVector(d, k); this.end.scale.setScalar(this.w * 6 * shimmer * clamp(num(this.o.spread, 1), 1, 6)); this.end.visible = k > 0.95;
+    this.end.position.copy(a).addScaledVector(d, k); this.end.scale.setScalar(this.w * 4 * shimmer * clamp(num(this.o.spread, 1), 1, 6)); this.end.visible = k > 0.95;
     this.stage.fxLight(this.end.position.x, this.end.position.y, this.end.position.z, this.color, 12 * this.w * 4 * k);
   }
 }

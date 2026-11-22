@@ -594,12 +594,12 @@ export class Stage {
     if (Array.isArray(ref)) { const p = this._point(ref); const c = new THREE.Vector3(p.x, p.y, p.z); const box = new THREE.Box3(c.clone().subScalar(0.3), c.clone().addScalar(0.3)); return { c, box, size: new THREE.Vector3(0.6, 0.6, 0.6), point: true }; }
     const g = this.groups.get(String(ref)); if (!g || !g.parent || !g.visible || g.scale.x < 0.05) return null;
     const box = this._box(g); if (box.isEmpty()) return null;
-    return { c: box.getCenter(new THREE.Vector3()), box, size: box.getSize(new THREE.Vector3()) };
+    return { c: box.getCenter(new THREE.Vector3()), box, size: box.getSize(new THREE.Vector3()), g };
   }
   fxPoint(ref, where = 'center') {
     const T = this.fxTarget(ref); if (!T) return null;
     if (T.point) return { x: T.c.x, y: T.c.y, z: T.c.z };
-    return { x: T.c.x, y: where === 'top' ? T.box.max.y : T.c.y, z: T.c.z };
+    return { x: T.c.x, y: where === 'top' ? T.box.max.y : where === 'upper' ? T.box.min.y + T.size.y * 0.7 : T.c.y, z: T.c.z };
   }
   fxLight(x, y, z, c, i) { if (i > 0.05) this.lightReq.push({ x, y, z, c, i }); }
   fxFlash(k) { this.flashK = Math.max(this.flashK, k); }
