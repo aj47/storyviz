@@ -44,6 +44,12 @@ function buildProject(id, b) {
     id, name: String(b.name || 'Untitled').slice(0, 80), pack: String(b.pack || ''), text: String(b.text || '').slice(0, 200_000),
     scenes: Array.isArray(b.scenes) ? b.scenes.slice(0, 200) : [], coach: b.coach && typeof b.coach === 'object' ? b.coach : null,
     research: Array.isArray(b.research) ? b.research.slice(0, 30) : [],
+    // The scratch pad: the writer's own notes, the agent's research cards, and lines it suggests for the script.
+    notes: b.notes && typeof b.notes === 'object' ? {
+      mine: String(b.notes.mine || '').slice(0, 100_000),
+      cards: Array.isArray(b.notes.cards) ? b.notes.cards.slice(0, 60) : [],
+      suggests: Array.isArray(b.notes.suggests) ? b.notes.suggests.slice(0, 40) : [],
+    } : null,
     fills: Array.isArray(b.fills) ? b.fills.slice(0, 60) : [],
     dismissed: Array.isArray(b.dismissed) ? b.dismissed.slice(-200).map((x) => String(x).slice(0, 300)) : [],
     createdAt: Number(b.createdAt) || Date.now(), updatedAt: Date.now(),
@@ -427,6 +433,55 @@ async function streamAgent(res, pack, text, ask) {
   res.end();
 }
 
+// ---------- scratch pad ----------
+// Research for the notes: the web search runs first, then the coach writes short notes, each tied to its source.
+// Nothing here touches the script; the writer moves what they want.
+const fence = (label, body) => `${label}:\n"""\n${body}\n"""`;
+function notesRequest(pack, text, mine, ask, sources) {
+  return [
+    'mode: notes', `writing type: ${pack.name}`, fence('what to research', ask),
+    fence('the script so far (for context only)', String(text).slice(0, 5000)),
+    fence("the writer's own notes (for context only)", String(mine).slice(0, 3000)),
+    `sources:\n${sources.length ? sourceList(sources) : 'none'}`,
+  ].join('\n\n');
+}
+async function streamNotes(res, pack, text, mine, ask) {
+  const send = openStream(res);
+  const topic = topicLine(text);
+  let sources = await searchMany([ask, ...(topic && ask.length < 60 ? [`${ask} (${topic})`] : [])], 4, 8, 1800);
+  if (!sources.length) sources = await wikiSources([topicOf(ask)], 4);
+  send({ type: 'sources', sources: sources.map(({ title, url, published }) => ({ title, url, published })) });
+  const cite = (l) => {
+    const o = parseLine(l); if (!o || !['note', 'summary', 'lead'].includes(o.k) || !o.text) return null;
+    const s = sources[Number(o.src) - 1]; delete o.src;
+    if (o.k === 'note' && !s) return null; // a note without a source is the model's memory, not research
+    return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
+  };
+  const r = res.destroyed ? null : await runAgent(res, send, 'coach', notesRequest(pack, text, mine, ask, sources), { maxTokens: 6000, shape: cite });
+  if (r) send(r.done);
+  res.end();
+}
+// Lines for the script drawn from the notes, each saying where it goes and which note it came from.
+function suggestRequest(pack, text, mine, notes) {
+  return [
+    'mode: suggest', `writing type: ${pack.name}`, `factual: ${pack.factual ? 'yes' : 'no'}`,
+    fence('the script', String(text).slice(0, 9000)),
+    fence("the writer's own notes", String(mine).slice(0, 6000) || '(none)'),
+    `research notes:\n${notes.length ? notes.map((n, i) => `[${i + 1}] ${n.text}${n.who ? ` (${n.who})` : ''}`).join('\n') : 'none'}`,
+  ].join('\n\n');
+}
+async function streamSuggest(res, pack, text, mine, notes) {
+  const send = openStream(res);
+  const cite = (l) => {
+    const o = parseLine(l); if (!o || o.k !== 'suggest' || !o.text) return null;
+    const n = notes[Number(o.src) - 1]; delete o.src;
+    return JSON.stringify(n ? { ...o, note: n.text, title: n.title, url: n.url } : o);
+  };
+  const r = await runAgent(res, send, 'coach', suggestRequest(pack, text, mine, notes), { maxTokens: 5000, shape: cite });
+  if (r) send(r.done);
+  res.end();
+}
+
 // Suggestions for the blanks in square brackets, each tied to the source it came from.
 async function streamFills(res, pack, text, blanks) {
   const send = openStream(res);
@@ -561,6 +616,20 @@ const server = http.createServer(async (req, res) => {
       const ask = String(b.ask || '').trim().slice(0, 600);
       if (!pack || ask.length < 3) { res.writeHead(400); res.end('unknown pack or empty instruction'); return; }
       return streamAgent(res, pack, b.text || '', ask);
+    }
+    if (req.method === 'POST' && (url.pathname === '/api/notes/research' || url.pathname === '/api/notes/suggest')) {
+      const b = await readBody(req);
+      const pack = loadPacks().find((p) => p.id === b.pack);
+      if (!pack) { res.writeHead(400); res.end('unknown pack'); return; }
+      if (url.pathname.endsWith('/research')) {
+        const ask = String(b.ask || '').trim().slice(0, 400);
+        if (ask.length < 3) { res.writeHead(400); res.end('say what to research'); return; }
+        return streamNotes(res, pack, b.text || '', b.mine || '', ask);
+      }
+      const notes = (Array.isArray(b.notes) ? b.notes : []).filter((n) => n && n.text).slice(0, 40)
+        .map((n) => ({ text: String(n.text).slice(0, 400), who: String(n.who || '').slice(0, 80), title: String(n.title || '').slice(0, 140), url: String(n.url || '').slice(0, 500) }));
+      if (!notes.length && String(b.mine || '').trim().length < 10) { res.writeHead(400); res.end('no notes yet'); return; }
+      return streamSuggest(res, pack, b.text || '', b.mine || '', notes);
     }
     if (req.method === 'POST' && url.pathname === '/api/fill') {
       const b = await readBody(req);

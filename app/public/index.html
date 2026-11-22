@@ -25,12 +25,30 @@
 
 <main>
   <section class="editor">
+    <nav class="view-tabs" id="viewTabs">
+      <button data-view="script" class="on">Script</button>
+      <button data-view="notes">Notes<i id="notesCount"></i></button>
+    </nav>
     <div class="pad">
       <div class="backdrop" id="backdrop" aria-hidden="true"></div>
       <textarea id="text" spellcheck="false" placeholder="Start writing. A blank line starts a new scene."></textarea>
       <button class="sample" id="sampleBtn" hidden>or load a sample</button>
     </div>
     <div class="stats" id="stats"></div>
+    <!-- The scratch pad: research the agent does, the writer's own notes, and lines it suggests moving into the script. -->
+    <div class="notes" id="notesView" hidden>
+      <form class="note-ask" id="noteAsk">
+        <input id="noteQ" maxlength="400" autocomplete="off" placeholder="Research something: who is Christopher Dunn, how much quartz is in Aswan granite…">
+        <button class="solid" type="submit">Research</button>
+      </form>
+      <h3>My notes</h3>
+      <textarea id="myNotes" spellcheck="true" placeholder="Jot down anything: ideas, links, lines you might use. The agent reads these when it suggests lines for the script."></textarea>
+      <div class="note-head"><h3>For the script</h3><button class="mini" id="suggestBtn" title="The agent reads your notes and the research below and suggests lines to add to the script">Suggest from notes</button></div>
+      <div class="rs-status" id="suggestStatus" hidden></div>
+      <div id="suggests"></div>
+      <p class="empty" id="suggestsEmpty">Research something or jot a few notes, then ask for suggestions. Each one says where it goes in the script.</p>
+      <div id="noteCards"></div>
+    </div>
   </section>
 
   <section class="center">

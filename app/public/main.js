@@ -76,6 +76,7 @@ async function boot() {
   }
   if (q.get('p')) { const p = S.paras[Number(q.get('p')) - 1]; if (p) { ta.setSelectionRange(p.start, p.start); moved(true); } }
   if (q.get('tab')) setTab(q.get('tab'));
+  if (q.get('view')) setView(q.get('view'));
   if (q.has('projects')) showProjects();
   setInterval(() => { if (S.restyle && !document.hidden) setStyle(S.styleIdx + 1); }, 7000);
   setInterval(tick, 250);
@@ -111,7 +112,7 @@ function loadProject(p) {
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
   S.coach.dismissed = new Set(Array.isArray(p.dismissed) ? p.dismissed : []);
-  applyPack(); restoreCoach(p.coach); restoreResearch(p.research); restoreFills(p.fills);
+  applyPack(); restoreCoach(p.coach); restoreResearch(p.research); restoreFills(p.fills); restoreNotes(p.notes);
   onText(true, false);
 }
 
@@ -151,6 +152,7 @@ function markDirty(why = 'Edited') {
 function snapshot(p) {
   p.name = $('#name').value.trim() || 'Untitled'; p.text = ta.value; p.pack = S.pack.id; p.coach = S.coach.saved;
   p.research = S.coach.research.filter((r) => r.status === 'done').map(({ q, sources, lines, rewrote }) => ({ q, sources, lines, rewrote }));
+  p.notes = notesOut();
   const f = S.coach.fills; p.fills = [...f.asked].filter((slot) => f.opts.get(slot)?.length).map((slot) => ({ slot, opts: f.opts.get(slot) }));
   const kept = new Map();
   S.paras.forEach((para, i) => {
@@ -1027,7 +1029,7 @@ function nextToImprove() {
   if (asap) return asap;
   if (S.paused || !S.improve || document.hidden) return null;
   // Improvement passes share the queue with everything else, so they wait until nothing the writer asked for is in it.
-  const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait');
+  const asked = S.coach.runs.size || S.coach.factBusy || S.coach.fills.busy || S.coach.research.some((r) => r.status === 'search' || r.status === 'wait') || S.notes.sugBusy || S.notes.cards.some(noteBusy);
   if (performance.now() - lastEdit < IMPROVE_PAUSE || asked || [...S.scenes.values()].some(flying)) return null;
   const order = [S.cur, ...S.paras.map((_, i) => i).filter((i) => i !== S.cur)];
   const ready = order.map((i) => activeFor(i)).filter((sc) => sc && sc.status === 'done' && sc.lines.length && !sc.impError);
@@ -1616,7 +1618,7 @@ function autotype(text, cps) {
 // ---------- transport ----------
 // Every request is timed, so Activity can show where the minutes went.
 const kindOf = (url, body) => (url === '/api/scene' ? (body.improve ? (body.focus === 'motion' ? 'Motion' : 'Improving looks') : 'Drawing scenes')
-  : { '/api/style': 'Making a style', '/api/coach': 'Reviewing the draft', '/api/facts': 'Checking facts', '/api/fill': 'Suggesting blanks', '/api/ask': 'Agent' }[url] || url);
+  : { '/api/style': 'Making a style', '/api/notes/research': 'Researching notes', '/api/notes/suggest': 'Suggesting from notes', '/api/coach': 'Reviewing the draft', '/api/facts': 'Checking facts', '/api/fill': 'Suggesting blanks', '/api/ask': 'Agent' }[url] || url);
 async function sse(url, body, signal, onEvent) {
   const kind = kindOf(url, body), t0 = performance.now(); let first = 0;
   const tally = () => {
@@ -1638,5 +1640,175 @@ async function sse(url, body, signal, onEvent) {
     }
   } finally { tally(); }
 }
+
+// ---------- scratch pad ----------
+// Notes sit next to the script: research the agent does (each note with its source), the writer's own jottings,
+// and lines the agent suggests moving into the script. Nothing reaches the script until the writer adds it.
+S.notes = { mine: '', cards: [], suggests: [], sugBusy: null, sugT0: 0, sugStatus: '' };
+const noteBusy = (r) => ['search', 'wait', 'gen'].includes(r.status);
+function setView(v) {
+  const notes = v === 'notes';
+  $('.pad').hidden = notes; $('#stats').hidden = notes; $('#notesView').hidden = !notes;
+  $$('#viewTabs button').forEach((b) => b.classList.toggle('on', b.dataset.view === v));
+  if (notes) renderNotes();
+}
+$('#viewTabs').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b) setView(b.dataset.view); });
+const ping = (view) => { const b = $(`#viewTabs [data-view="${view}"]`); b.classList.remove('ping'); void b.offsetWidth; b.classList.add('ping'); };
+function restoreNotes(saved) {
+  const n = S.notes; n.cards.forEach((r) => r.ctrl?.abort()); n.sugBusy?.abort();
+  n.mine = String(saved?.mine || ''); n.sugBusy = null; n.sugStatus = '';
+  n.cards = (Array.isArray(saved?.cards) ? saved.cards : []).filter((r) => r && r.q).map((r) => ({ q: String(r.q), sources: r.sources || [], notes: r.notes || [], leads: r.leads || [], summary: r.summary || '', status: 'done' }));
+  n.suggests = Array.isArray(saved?.suggests) ? saved.suggests.filter((o) => o && o.text) : [];
+  $('#myNotes').value = n.mine; renderNotes();
+}
+const notesOut = () => ({
+  mine: S.notes.mine,
+  cards: S.notes.cards.filter((r) => r.status === 'done').map(({ q, sources, notes, leads, summary }) => ({ q, sources, notes, leads, summary })),
+  suggests: S.notes.suggests.map(({ before, after_text, ...o }) => o),
+});
+const allNotes = () => S.notes.cards.flatMap((r) => r.notes);
+function renderNotes() {
+  const n = S.notes, link = (o) => (o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title || '')}">${esc(hostOf(o.url))}</a>` : '');
+  $('#notesCount').textContent = allNotes().length + n.suggests.filter((o) => !o.used).length || '';
+  if ($('#notesView').hidden) return;
+  $('#suggestBtn').disabled = Boolean(n.sugBusy) || (!allNotes().length && n.mine.trim().length < 10);
+  $('#suggestBtn').textContent = n.sugBusy ? 'Suggesting…' : n.suggests.length ? 'Suggest again' : 'Suggest from notes';
+  $('#suggestsEmpty').hidden = n.suggests.length > 0 || Boolean(n.sugBusy);
+  $('#suggests').innerHTML = n.suggests.map((o, i) => {
+    const where = o.missed ? 'Its place in the script was not found, so it went at the end.'
+      : o.replace ? `Replaces “${esc(o.replace)}”` : o.after ? `${o.as === 'paragraph' ? 'New scene after' : 'After'} “${esc(o.after)}”` : `${o.as === 'paragraph' ? 'New scene at' : 'At'} the end`;
+    const acts = o.used
+      ? `<span class="where">Added to the script.</span>${o.after_text != null && ta.value === o.after_text ? `<button class="mini" data-sundo="${i}">Undo</button>` : ''}`
+      : `<button class="mini" data-add="${i}">Add to script</button><button class="mini" data-skip="${i}">Dismiss</button>`;
+    return `<div class="sug ${o.missed ? 'missed' : ''} ${o.used ? 'used' : ''}"><div class="txt">${o.replace && !o.used ? `<s>${esc(o.replace)}</s> ` : ''}${esc(o.text)}</div>`
+      + `<span class="where">${where}${o.why ? ' · ' + esc(o.why) : ''}${o.url ? ' · ' + link(o) : ''}</span><div class="acts">${acts}</div></div>`;
+  }).join('');
+  $('#noteCards').innerHTML = n.cards.map((r, i) => {
+    const notes = r.notes.map((o, j) => `<div class="note ${o.used ? 'used' : ''}">${esc(o.text)}<span class="src">${esc(o.who || '')}${o.who && o.url ? ' · ' : ''}${link(o)}</span>`
+      + `<div class="acts"><button class="mini" data-ns="${i}:${j}" title="Insert at your cursor in the script">→ Script</button><button class="mini" data-nm="${i}:${j}">→ My notes</button><button class="mini" data-nx="${i}:${j}" title="Remove this note">×</button></div></div>`).join('');
+    const srcs = r.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(hostOf(s.url))}${s.published ? ' ' + esc(s.published.slice(0, 4)) : ''} · ${esc(s.title)}</a>`).join('');
+    const leads = r.leads.map((o) => `<div class="lead">Next: <button data-lead="${esc(o.text)}">${esc(o.text)}</button></div>`).join('');
+    return `<div class="rs"><div class="rs-q"><span>${esc(r.q)}</span><button class="mini" data-cx="${i}" title="${noteBusy(r) ? 'Stop' : 'Remove'}">×</button></div>`
+      + `<div class="rs-status ${r.status === 'error' ? 'err' : ''}" data-ns-status="${i}"></div>`
+      + (r.summary ? `<div class="line answer">${esc(r.summary)}</div>` : '') + notes + leads
+      + (srcs ? `<div class="rs-srcs"><h3>Sources read</h3>${srcs}</div>` : '') + '</div>';
+  }).join('');
+  notesStatus();
+}
+function notesStatus() {
+  const n = S.notes, secs = (t0) => Math.round((performance.now() - (t0 || 0)) / 1000);
+  n.cards.forEach((r, i) => {
+    const el = $(`#noteCards [data-ns-status="${i}"]`); if (!el) return;
+    const k = r.sources.length;
+    el.textContent = r.status === 'search' ? 'Searching the web…' : r.status === 'wait' ? `${k ? `Read ${k} source${k === 1 ? '' : 's'}. ` : ''}In the queue: ${secs(r.t0)}s`
+      : r.status === 'gen' ? 'Writing notes…' : r.status === 'error' ? (r.error || 'That did not work. Try again.') : '';
+    el.hidden = !el.textContent;
+  });
+  const st = $('#suggestStatus');
+  st.textContent = n.sugBusy ? (n.sugStatus === 'gen' ? 'Writing suggestions…' : `In the queue: ${secs(n.sugT0)}s`) : n.sugStatus === 'error' ? n.sugError || 'That did not work. Try again.' : '';
+  st.classList.toggle('err', !n.sugBusy && n.sugStatus === 'error'); st.hidden = !st.textContent;
+}
+setInterval(() => { if (!$('#notesView').hidden && (S.notes.sugBusy || S.notes.cards.some(noteBusy))) notesStatus(); }, 1000);
+
+async function researchNote(q) {
+  q = q.trim(); if (!S.pack || q.length < 3) return;
+  const n = S.notes, r = { q, sources: [], notes: [], leads: [], summary: '', status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
+  n.cards.unshift(r); renderNotes();
+  try {
+    await sse('/api/notes/research', { pack: S.pack.id, text: ta.value, mine: n.mine, ask: q }, r.ctrl.signal, (ev) => {
+      if (ev.type === 'sources') { r.sources = ev.sources || []; r.status = 'wait'; }
+      else if (ev.type === 'first') r.status = 'gen';
+      else if (ev.type === 'line') {
+        const o = parseLine(ev.raw); if (!o) return;
+        if (o.k === 'note') r.notes.push({ text: o.text, who: o.who || '', title: o.title, url: o.url });
+        else if (o.k === 'lead') r.leads.push({ text: o.text }); else if (o.k === 'summary') r.summary = o.text;
+      } else if (ev.type === 'done') r.status = 'done';
+      else if (ev.type === 'error') { r.status = 'error'; r.error = ev.message; }
+      if (n.cards.includes(r)) renderNotes();
+    });
+    if (noteBusy(r)) r.status = r.notes.length ? 'done' : 'error';
+  } catch (e) { if (r.ctrl.signal.aborted) return; r.status = 'error'; r.error = String(e.message || e); }
+  if (!n.cards.includes(r) || r.project !== S.project?.id) return;
+  if (r.status === 'done' && !r.notes.length) { r.status = 'error'; r.error = r.sources.length ? 'The sources had nothing specific on that. Try other words.' : 'The web search found nothing. Try other words.'; }
+  if (r.status === 'done') markDirty(`Research: ${q.slice(0, 50)}`);
+  renderNotes();
+}
+async function suggestFromNotes() {
+  const n = S.notes; if (n.sugBusy || !S.pack) return;
+  n.sugBusy = new AbortController(); n.sugT0 = performance.now(); n.sugStatus = 'wait'; n.sugError = '';
+  const fresh = [], keep = n.suggests.filter((o) => o.used); renderNotes();
+  try {
+    await sse('/api/notes/suggest', { pack: S.pack.id, text: ta.value, mine: n.mine, notes: allNotes() }, n.sugBusy.signal, (ev) => {
+      if (ev.type === 'first') n.sugStatus = 'gen';
+      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o?.k === 'suggest' && o.text) { fresh.push(o); n.suggests = [...fresh, ...keep]; } }
+      else if (ev.type === 'error') { n.sugStatus = 'error'; n.sugError = ev.message; }
+      renderNotes();
+    });
+  } catch (e) { if (!n.sugBusy?.signal.aborted) { n.sugStatus = 'error'; n.sugError = String(e.message || e); } }
+  n.sugBusy = null;
+  if (n.sugStatus !== 'error') { n.sugStatus = fresh.length ? '' : 'error'; if (!fresh.length) n.sugError = 'No suggestions came back. Add more notes or try again.'; else markDirty('Suggestions from notes'); }
+  renderNotes();
+}
+
+// Puts a suggestion into the script where it says it goes: replacing words, after a sentence, or as a new
+// paragraph (a new scene). If its place is gone, it goes at the end. The old text is kept for Undo.
+async function placeSuggestion(o) {
+  await saveNow();
+  const before = ta.value, add = String(o.text).trim(); let text = before, sel = null;
+  if (o.replace) { const i = findQuote(text, o.replace); if (i >= 0) { text = text.slice(0, i) + add + text.slice(i + o.replace.length); sel = [i, i + add.length]; } }
+  if (!sel) {
+    const i = o.after ? findQuote(text, o.after) : -1; if ((o.after || o.replace) && i < 0) o.missed = true;
+    if (o.as === 'paragraph') {
+      let end = i < 0 ? text.length : text.indexOf('\n\n', i + o.after.length); if (end < 0) end = text.length;
+      const head = text.slice(0, end).replace(/\s+$/, ''), tail = text.slice(end).replace(/^\s+/, ''), at = head.length + (head ? 2 : 0);
+      text = head + (head ? '\n\n' : '') + add + (tail ? '\n\n' + tail : ''); sel = [at, at + add.length];
+    } else {
+      let end;
+      if (i < 0) end = text.replace(/\s+$/, '').length;
+      else {
+        const from = i + o.after.length, nl = text.indexOf('\n', from);
+        const m = /[.?!]["'”’)]*$/.test(o.after) ? { index: 0, 0: '' } : /[.?!]["'”’)]*(?=\s|$)/.exec(text.slice(from));
+        end = m ? from + m.index + m[0].length : nl < 0 ? text.length : nl;
+        if (nl >= 0 && nl < end) end = nl;
+      }
+      const head = text.slice(0, end), tail = text.slice(end), sep = head && !/\s$/.test(head) ? ' ' : '';
+      text = head + sep + add + (tail && !/^\s/.test(tail) ? ' ' : '') + tail; sel = [end + sep.length, end + sep.length + add.length];
+    }
+  }
+  o.used = true; o.before = before; o.after_text = text;
+  ta.value = text; onText(); markDirty('Added from notes');
+  setView('script'); ta.focus(); ta.setSelectionRange(...sel); moved(true);
+}
+// A note goes in at the writer's cursor in the script, as a sentence of its own.
+function noteToScript(o) {
+  const v = ta.value, at = ta.selectionEnd ?? v.length, head = v.slice(0, at), tail = v.slice(at);
+  const add = String(o.text).trim(), sep = head && !/\s$/.test(head) ? ' ' : '';
+  ta.value = head + sep + add + (tail && !/^\s/.test(tail) ? ' ' : '') + tail;
+  const pos = at + sep.length + add.length; ta.setSelectionRange(pos, pos);
+  o.used = true; onText(); markDirty('Added a note to the script'); ping('script'); renderNotes();
+}
+function noteToMine(o) {
+  const n = S.notes, line = `• ${o.text}${o.who || o.url ? ` (${[o.who, o.url ? hostOf(o.url) : ''].filter(Boolean).join(', ')})` : ''}`;
+  n.mine = n.mine.replace(/\s+$/, '') + (n.mine.trim() ? '\n' : '') + line; $('#myNotes').value = n.mine;
+  o.used = true; markDirty('Notes'); renderNotes();
+}
+$('#noteAsk').addEventListener('submit', (e) => { e.preventDefault(); const q = $('#noteQ').value; if (q.trim().length >= 3) { $('#noteQ').value = ''; researchNote(q); } });
+$('#myNotes').addEventListener('input', (e) => { S.notes.mine = e.target.value; markDirty('Notes'); $('#suggestBtn').disabled = Boolean(S.notes.sugBusy) || (!allNotes().length && S.notes.mine.trim().length < 10); });
+$('#suggestBtn').onclick = () => suggestFromNotes();
+$('#notesView').addEventListener('click', (e) => {
+  const n = S.notes, d = (k) => e.target.closest(`[data-${k}]`)?.dataset;
+  const pick = (v) => { const [i, j] = v.split(':').map(Number); return [n.cards[i], j]; };
+  let t;
+  if ((t = d('add'))) placeSuggestion(n.suggests[Number(t.add)]);
+  else if ((t = d('skip'))) { n.suggests.splice(Number(t.skip), 1); markDirty('Notes'); renderNotes(); }
+  else if ((t = d('sundo'))) {
+    const o = n.suggests[Number(t.sundo)]; if (!o || ta.value !== o.after_text) return;
+    ta.value = o.before; o.used = false; o.missed = false; delete o.before; delete o.after_text; onText(); markDirty('Undid an added line'); renderNotes();
+  } else if ((t = d('ns'))) { const [r, j] = pick(t.ns); if (r?.notes[j]) noteToScript(r.notes[j]); }
+  else if ((t = d('nm'))) { const [r, j] = pick(t.nm); if (r?.notes[j]) noteToMine(r.notes[j]); }
+  else if ((t = d('nx'))) { const [r, j] = pick(t.nx); r?.notes.splice(j, 1); markDirty('Notes'); renderNotes(); }
+  else if ((t = d('cx'))) { const [r] = n.cards.splice(Number(t.cx), 1); r?.ctrl?.abort(); markDirty('Notes'); renderNotes(); }
+  else if ((t = d('lead'))) researchNote(t.lead);
+});
 
 boot();
