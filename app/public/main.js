@@ -652,6 +652,7 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null, c
 // Draws the current scene again. The old drawing stays on screen until the new one starts arriving.
 function redraw() {
   const p = S.paras[S.cur]; if (!p || p.text.length < 12) return;
+  yieldToWriter();
   const key = keyOf(p.text); let old = S.scenes.get(key);
   if (old && flying(old)) return;
   if (old?.status === 'cancelled' && !old.lines.length) old = null;
@@ -669,6 +670,7 @@ function redraw() {
 const REMAKE = /\b(remake|redo|re-?draw|rebuild|start (over|again)|from scratch|instead|rather than|not as|not an? |completely|entirely|totally|whole scene|different(ly)?|wrong)\b/i;
 function guideScene(idx, guide, caption, remake = REMAKE.test(guide)) {
   const p = S.paras[idx]; if (!p || p.text.length < 12) return;
+  yieldToWriter();
   // "Remove the on-screen text" does not need the model: the text comes off at once. The direction is still
   // sent and kept with the scene, so later passes do not put text back.
   if (NO_TEXT.test(guide)) { const now = activeFor(idx) || sceneFor(idx); if (now) { removeText(now); caption = ' '; markDirty(`Scene ${idx + 1} text removed`); } }
@@ -1065,6 +1067,9 @@ const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines
 // Effects (fire, lightning, glow...) are part of how a scene looks, so the passes that work on looks may add them too.
 const FX_FOCUS = ['subject', 'setting', 'background', 'polish', 'refine'];
 const FULL_SCENE = 22;
+const MAX_REFINES = 3;
+// What the writer asks for goes first: background passes still running are stopped so the request is not queued behind them.
+const yieldToWriter = () => { if (improving) stopImproving(improving); };
 let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
@@ -1080,9 +1085,11 @@ function nextToImprove() {
   const ready = order.map((i) => activeFor(i)).filter((sc) => sc && sc.status === 'done' && sc.lines.length && !sc.impError);
   const first = ready.find((sc) => (sc.round || 0) < PLAN.length || needsMotion(sc));
   if (first) return first;
-  // Every scene has had its passes. Improving never stops: it goes round the scenes, the one on screen first,
+  // Every scene has had its passes. Refining goes round the scenes a few more times, the one on screen first,
+  // then stops: each turn is a model request, and on a rate-limited key endless refining makes the writer's own
+  // requests wait. An edit to a scene starts it again.
   // refining whichever has had the fewest turns.
-  return ready.slice().sort((a, b) => (a.refined || 0) - (b.refined || 0))[0] || null;
+  return ready.filter((sc) => (sc.refined || 0) < MAX_REFINES).sort((a, b) => (a.refined || 0) - (b.refined || 0))[0] || null;
 }
 async function improveRound(sc) {
   improving = sc; sc.imps = [];
@@ -1572,6 +1579,7 @@ async function applyAgent(r, anyway = false) {
   r.before = before; r.after = text; ta.value = text; onText(true); markDirty(`Agent: ${r.q.slice(0, 60)}`);
 }
 async function ask(q) {
+  yieldToWriter();
   const c = S.coach; q = q.trim(); if (!S.pack || q.length < 3) return;
   const r = { q, sent: ta.value, sources: [], lines: [], status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
   c.research.unshift(r); renderResearch();
@@ -1758,6 +1766,7 @@ function notesStatus() {
 setInterval(() => { if (!$('#notesView').hidden && (S.notes.sugBusy || S.notes.cards.some(noteBusy))) notesStatus(); }, 1000);
 
 async function researchNote(q) {
+  yieldToWriter();
   q = q.trim(); if (!S.pack || q.length < 3) return;
   const n = S.notes, r = { q, sources: [], notes: [], leads: [], summary: '', status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
   n.cards.unshift(r); renderNotes();
