@@ -1,4 +1,4 @@
-import { Stage, STYLES, STYLE_ORDER, actKey } from './scene.js';
+import { Stage, STYLES, STYLE_ORDER, actKey, FX } from './scene.js';
 import { exportVideo, CAPTION } from './export.js';
 
 const $ = (s) => document.querySelector(s);
@@ -609,6 +609,11 @@ function motionWords(o) {
   if (o.t === 'count') return `counts ${o.from ?? 0} to ${Number(o.to).toLocaleString()}${o.text ? ' ' + String(o.text).replace('{n}', '').trim() : ''}`;
   if (o.t === 'obj') return `${who(o.id)} ${o.in === 'drop' ? 'drops in' : o.in === 'grow' ? 'grows up' : o.in === 'left' || o.in === 'right' ? 'slides in' : 'appears'}`;
   const id = who(o.id);
+  if (FX.includes(o.do)) {
+    const on = who(o.id ?? o.to);
+    return { lightning: `lightning strikes${on ? ' ' + on : ''}`, electric: `${on} crackles with electricity`, sparks: `sparks fly from ${on || 'a point'}`, fire: `${on || 'fire'} burns`,
+      smoke: `smoke rises from ${on || 'a point'}`, glow: `${on} glows`, beam: `beam from ${who(o.from ?? o.id)} to ${who(o.to)}`, sparkle: `${on} sparkles`, rain: 'rain falls', snow: 'snow falls' }[o.do];
+  }
   return { move: `${id} goes to ${who(o.to)}`, flow: `${o.of ? who(o.of) + 's' : 'dots'} flow from ${who(o.from)} to ${who(o.to)}`, grow: `${id} ${Number(o.k) < 1 ? 'shrinks' : 'grows'}`,
     rise: `${id} rises`, shake: `${id} shakes`, vanish: `${id} vanishes`, spin: `${id} spins`, flash: `${id} is highlighted`, look: `camera on ${id}` }[o.do] || o.do;
 }
@@ -959,10 +964,12 @@ const PLAN = [['subject', 'setting', 'background'], ['polish'], ['polish'], ['po
 const TURNS = ['refine', 'remotion', 'staging'];
 const FOCUS_WORDS = { motion: 'adding motion', refine: 'refining looks', remotion: 'refining motion', staging: 'refining staging' };
 const focusWords = (f) => FOCUS_WORDS[f] || `improving ${f}`;
-const ALLOWED = { motion: ['obj', 'act', 'count'], refine: ['obj', 'drop'], remotion: ['obj', 'act', 'count', 'cut'], staging: ['obj', 'env', 'shot', 'drop'] };
+const ALLOWED = { motion: ['obj', 'act', 'count'], polish: ['obj', 'many', 'drop'], refine: ['obj', 'drop'], remotion: ['obj', 'act', 'count', 'cut'], staging: ['obj', 'env', 'shot', 'drop'] };
 // Once the first round has filled the scene in, one pass choreographs it: what moves, in what order, to tell the paragraph.
 // A scene that was drawn with motion already has it; this is for scenes that came out still.
-const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines.some((l) => l.t === 'act' || l.step);
+const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines.some((l) => (l.t === 'act' && !FX.includes(l.do)) || l.step);
+// Effects (fire, lightning, glow...) are part of how a scene looks, so the passes that work on looks may add them too.
+const FX_FOCUS = ['subject', 'setting', 'background', 'polish', 'refine'];
 let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
@@ -1017,7 +1024,9 @@ async function improveOnce(sc, focus, note = '') {
       if (ev.type === 'prompt') imp.prompt = ev.text;
       else if (ev.type === 'first') { imp.status = 'gen'; imp.genStart = performance.now(); imp.cached = Boolean(ev.cached); }
       else if (ev.type === 'line') {
-        let o = parseLine(ev.raw); if (!o || !(ALLOWED[focus] || ['obj', 'many', 'env']).includes(o.t)) return;
+        let o = parseLine(ev.raw); if (!o) return;
+        const fx = o.t === 'act' && FX.includes(o.do) && FX_FOCUS.includes(focus);
+        if (!fx && !(ALLOWED[focus] || ['obj', 'many', 'env']).includes(o.t)) return;
         // Refining may redraw what is there, never add: the scene must not grow without end.
         if ((focus === 'refine' || focus === 'staging') && o.t === 'obj' && !had.has(String(o.id))) return;
         if (o.t === 'shot') { const old = sc.lines.find((l) => l.t === 'shot'); if (!old) return; o = { ...old, cam: o.cam || old.cam }; }

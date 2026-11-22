@@ -1,6 +1,8 @@
 // 3D stage: draws scene lines (env, obj, many, label, gap, node, edge, shot, act, count) the moment
 // they arrive, in whichever visual style is active. Restyling rebuilds from the stored lines.
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { FX, makeFx, fxTexture, glowBlend } from './fx.js';
 
 const D2R = Math.PI / 180;
 const GHOST = '#c9ced8';
@@ -41,9 +43,15 @@ const easeInOut = (k) => (k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2);
 const easeOut = (k) => 1 - (1 - k) ** 3;
 const bounce = (k) => { const n = 7.5625, d = 2.75; if (k < 1 / d) return n * k * k; if (k < 2 / d) return n * (k -= 1.5 / d) * k + 0.75; if (k < 2.5 / d) return n * (k -= 2.25 / d) * k + 0.9375; return n * (k -= 2.625 / d) * k + 0.984375; };
 const ENTERS = ['pop', 'drop', 'grow', 'left', 'right'];
-const ACTS = ['move', 'flow', 'grow', 'rise', 'shake', 'vanish', 'spin', 'flash', 'look'];
+const ACTS = ['move', 'flow', 'grow', 'rise', 'shake', 'vanish', 'spin', 'flash', 'look', ...FX];
+export { FX };
+const SHAPES = ['box', 'sphere', 'cyl', 'cone', 'torus', 'pyramid', 'wedge', 'dome', 'capsule'];
+const FINISHES = ['glow', 'metal', 'glass'];
+// A part's finish is its last element when that is a word: [shape, centre, size, colour, rotation?, finish?].
+const finishOf = (p) => { const f = typeof p[5] === 'string' ? p[5] : typeof p[4] === 'string' ? p[4] : null; return FINISHES.includes(f) ? f : null; };
 // Two act lines are the same motion when they do the same thing to the same object in the same step.
-export const actKey = (o) => (o.t === 'count' ? `count|${JSON.stringify(o.at)}|${o.step || 0}` : `${o.do}|${o.id ?? ''}|${o.of ?? ''}|${JSON.stringify(o.from ?? '')}|${o.step || 0}`);
+// An effect with no object of its own is told apart by where it is.
+export const actKey = (o) => (o.t === 'count' ? `count|${JSON.stringify(o.at)}|${o.step || 0}` : `${o.do}|${o.id ?? ''}|${o.of ?? ''}|${JSON.stringify(o.from ?? '')}|${o.step || 0}` + (FX.includes(o.do) && o.at != null && o.id == null ? `|${JSON.stringify(o.at)}` : ''));
 const easeOutBack = (k) => { const c = 1.9; const x = clamp(k, 0, 1) - 1; return 1 + (c + 1) * x * x * x + c * x * x; };
 
 function color(hex, fallback = '#b8bcc6') {
@@ -77,6 +85,10 @@ export class Stage {
     Object.assign(this.sun.shadow.camera, { left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 60 });
     this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.03;
     this.scene.add(this.sun);
+    // Fire, lightning and glowing parts light what is around them. A fixed set of lights is shared out every frame
+    // to the brightest of them, so adding one never makes every material recompile.
+    this.fxLights = Array.from({ length: 4 }, () => { const l = new THREE.PointLight(0xffffff, 0, 16, 2); this.scene.add(l); return l; });
+    this.lightReq = []; this.flashK = 0; this.hemiBase = 1; this.sunBase = 2.2;
     this.ground = new THREE.Mesh(new THREE.CircleGeometry(60, 72), new THREE.MeshStandardMaterial({ color: 0x9aa39a, roughness: 1 }));
     this.ground.rotation.x = -Math.PI / 2; this.ground.receiveShadow = true; this.scene.add(this.ground);
     this.grid = new THREE.GridHelper(60, 60, 0xffffff, 0xffffff); this.grid.position.y = 0.01; this.grid.visible = false; this.scene.add(this.grid);
@@ -185,7 +197,7 @@ export class Stage {
     this.actors = this.actors.filter((a) => !groups.includes(a.g));
   }
   _dropMotion(test) {
-    for (const m of [...this.acts, ...this.counts]) if (test(m)) { (m.parts || [m.ring, m.sp]).forEach((x) => x?.parent?.remove(x)); if (m.tx) this.texts = this.texts.filter((t) => t !== m.tx); }
+    for (const m of [...this.acts, ...this.counts]) if (test(m)) { (m.parts || [m.ring, m.sp]).forEach((x) => x?.parent?.remove(x)); m.fx?.dispose(); if (m.tx) this.texts = this.texts.filter((t) => t !== m.tx); }
     this.acts = this.acts.filter((m) => !test(m)); this.counts = this.counts.filter((m) => !test(m));
   }
 
@@ -226,6 +238,7 @@ export class Stage {
       this.scene.add(this.grid);
     }
     const L = { day: [1.05, 2.3, '#ffffff', [8, 15, 7]], dusk: [0.7, 1.9, '#ffb07a', [-13, 5, 6]], night: [0.42, 0.9, '#9db8ff', [-6, 12, 4]], indoor: [1.0, 1.4, '#fff3e0', [3, 16, 8]] }[o.light] || [1.05, 2.3, '#ffffff', [8, 15, 7]];
+    this.hemiBase = L[0]; this.sunBase = L[1];
     this.hemi.intensity = L[0]; this.hemi.color.copy(top).lerp(new THREE.Color('#ffffff'), 0.6); this.hemi.groundColor.copy(this.ground.material.color).lerp(new THREE.Color('#444444'), 0.3);
     this.sun.intensity = L[1]; this.sun.color.copy(color(L[2])); this.sun.position.set(...L[3]);
     this.sun.castShadow = !lines;
@@ -240,6 +253,17 @@ export class Stage {
     else if (shape === 'cyl') g = new THREE.CylinderGeometry(0.5, 0.5, 1, lo ? 8 : 36);
     else if (shape === 'cone') g = new THREE.ConeGeometry(0.5, 1, lo ? 7 : 36);
     else if (shape === 'torus') { g = new THREE.TorusGeometry(0.38, 0.12, lo ? 6 : 16, lo ? 10 : 40); g.rotateX(Math.PI / 2); }
+    // Square-based pyramid, flat-faced, base w x d.
+    else if (shape === 'pyramid') { g = new THREE.ConeGeometry(Math.SQRT1_2, 1, 4, 1); g.rotateY(Math.PI / 4); g = g.toNonIndexed(); g.computeVertexNormals(); }
+    // A triangular prism lying along x: a roof, a ramp, a wedge of cheese.
+    else if (shape === 'wedge') {
+      const tri = new THREE.Shape([new THREE.Vector2(-0.5, -0.5), new THREE.Vector2(0.5, -0.5), new THREE.Vector2(0, 0.5)]);
+      g = new THREE.ExtrudeGeometry(tri, { depth: 1, bevelEnabled: false }); g.translate(0, 0, -0.5); g.rotateY(Math.PI / 2); g.computeVertexNormals();
+    }
+    // Half a sphere sitting on its flat side: a dome, a mound, a hill, a helmet.
+    else if (shape === 'dome') { g = new THREE.SphereGeometry(0.5, lo ? 10 : 36, lo ? 5 : 14, 0, Math.PI * 2, 0, Math.PI / 2); g.scale(1, 2, 1); g.translate(0, -0.5, 0); }
+    // A rounded rod: limbs, fingers, pills, sausages.
+    else if (shape === 'capsule') { g = new THREE.CapsuleGeometry(0.5, 1, lo ? 3 : 8, lo ? 8 : 24); g.scale(1, 0.5, 1); }
     else g = new THREE.BoxGeometry(1, 1, 1);
     this.geoCache.set(key, g); return g;
   }
@@ -254,11 +278,24 @@ export class Stage {
     if (!ghost && st.sat) { const h = c.getHSL({}); c.setHSL(h.h, clamp(h.s + st.sat, 0, 1), clamp(h.l, 0.25, 0.8)); }
     return c;
   }
-  _mat(hex, ghost) {
-    const st = this.style; const key = `${hex}|${ghost ? 1 : 0}`;
+  // Lit reflections for metal and glass, made once per stage from a simple studio room.
+  _envMap() {
+    if (!this.envTex) { const pm = new THREE.PMREMGenerator(this.renderer); this.envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose(); }
+    return this.envTex;
+  }
+  _mat(hex, ghost, finish = null) {
+    const st = this.style; if (ghost) finish = null; const key = `${hex}|${ghost ? 1 : 0}|${finish || ''}`;
     if (this.matCache.has(key)) return this.matCache.get(key);
     const c = this._tinted(hex, ghost); let m;
-    if (st.shade === 'lines') m = new THREE.MeshBasicMaterial({ color: color(st.fill), transparent: st.fillOpacity < 1 || ghost, opacity: ghost ? st.fillOpacity * 0.35 : st.fillOpacity, depthWrite: st.fillOpacity >= 1 && !ghost });
+    if (finish === 'glow') {
+      // A glowing part is its own light: never shaded, always at least fairly bright.
+      const g = color(hex); const h = g.getHSL({}); g.setHSL(h.h, h.s, Math.max(h.l, 0.55));
+      m = new THREE.MeshBasicMaterial({ color: g, toneMapped: false });
+    } else if (finish === 'metal' && st.shade !== 'lines' && st.shade !== 'toon') m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.3, metalness: 0.85, envMap: this._envMap(), envMapIntensity: 1, flatShading: st.shade === 'flat' });
+    else if (finish === 'glass' && st.shade !== 'lines') {
+      m = st.shade === 'toon' ? new THREE.MeshToonMaterial({ color: c, gradientMap: this.toonMap }) : new THREE.MeshStandardMaterial({ color: c, roughness: 0.05, metalness: 0.1, envMap: this._envMap(), envMapIntensity: 1.4 });
+      Object.assign(m, { transparent: true, opacity: 0.4, depthWrite: false });
+    } else if (st.shade === 'lines') m = new THREE.MeshBasicMaterial({ color: color(st.fill), transparent: st.fillOpacity < 1 || ghost, opacity: ghost ? st.fillOpacity * 0.35 : st.fillOpacity, depthWrite: st.fillOpacity >= 1 && !ghost });
     else if (st.shade === 'toon') m = new THREE.MeshToonMaterial({ color: c, gradientMap: this.toonMap });
     else m = new THREE.MeshStandardMaterial({ color: c, roughness: st.rough ?? 0.8, metalness: 0, flatShading: st.shade === 'flat' });
     if (ghost && st.shade !== 'lines') { m.transparent = true; m.opacity = 0.42; m.depthWrite = false; }
@@ -274,7 +311,7 @@ export class Stage {
     this.matCache.set(key, m); return m;
   }
 
-  _voxelPart(shape, w, h, d, hex, ghost) {
+  _voxelPart(shape, w, h, d, hex, ghost, finish) {
     const vs = 0.2;
     const fit = (len) => clamp(Math.round(len / vs), 1, 14);
     const nx = fit(w), ny = fit(h), nz = fit(d);
@@ -286,10 +323,14 @@ export class Stage {
       else if (shape === 'cyl') inside = u * u + q * q <= 0.27;
       else if (shape === 'cone') { const r = 0.5 * (0.5 - v) + 0.06; inside = u * u + q * q <= r * r; }
       else if (shape === 'torus') { const rr = Math.sqrt(u * u + q * q) - 0.38; inside = (rr / 0.14) ** 2 + (v / 0.5) ** 2 <= 1.15; }
+      else if (shape === 'pyramid') { const r = 0.5 * (0.5 - v) + 0.05; inside = Math.abs(u) <= r && Math.abs(q) <= r; }
+      else if (shape === 'wedge') inside = Math.abs(q) <= 0.5 * (0.5 - v) + 0.05;
+      else if (shape === 'dome') { const y = (v + 0.5) / 2; inside = u * u + q * q + y * y <= 0.27; }
+      else if (shape === 'capsule') inside = u * u + q * q <= 0.27;
       if (inside) cells.push([u, v, q]);
     }
     if (!cells.length) cells.push([0, 0, 0]);
-    const mesh = new THREE.InstancedMesh(this._geo('box'), this._mat(hex, ghost), cells.length);
+    const mesh = new THREE.InstancedMesh(this._geo('box'), this._mat(hex, ghost, finish), cells.length);
     const m = new THREE.Matrix4(); const sc = new THREE.Vector3((w / nx) * 0.94, (h / ny) * 0.94, (d / nz) * 0.94); const qn = new THREE.Quaternion(); const p = new THREE.Vector3();
     cells.forEach(([u, v, q], i) => { p.set(u * w, v * h, q * d); m.compose(p, qn, sc); mesh.setMatrixAt(i, m); });
     mesh.instanceMatrix.needsUpdate = true;
@@ -299,33 +340,51 @@ export class Stage {
 
   _part(p, ghost) {
     if (!Array.isArray(p) || p.length < 3) return null;
-    const shape = ['box', 'sphere', 'cyl', 'cone', 'torus'].includes(p[0]) ? p[0] : (p[0] === 'cylinder' ? 'cyl' : 'box');
+    const shape = SHAPES.includes(p[0]) ? p[0] : (p[0] === 'cylinder' ? 'cyl' : p[0] === 'hemisphere' ? 'dome' : 'box');
+    const finish = finishOf(p);
     const c = Array.isArray(p[1]) ? p[1] : [0, 0, 0]; const s = Array.isArray(p[2]) ? p[2] : [1, 1, 1];
     const w = clamp(Math.abs(num(s[0], 1)), 0.02, 40), h = clamp(Math.abs(num(s[1], 1)), 0.02, 40), d = clamp(Math.abs(num(s[2], w)), 0.02, 40);
     const hex = typeof p[3] === 'string' ? p[3] : '#b8bcc6';
     const st = this.style; let mesh;
-    if (st.voxel) mesh = this._voxelPart(shape, w, h, d, hex, ghost);
+    if (st.voxel) mesh = this._voxelPart(shape, w, h, d, hex, ghost, finish);
     else {
-      mesh = new THREE.Mesh(this._geo(shape), this._mat(hex, ghost));
+      mesh = new THREE.Mesh(this._geo(shape), this._mat(hex, ghost, finish));
       mesh.scale.set(w, shape === 'torus' ? h / 0.24 : h, d);
       if (st.shade === 'lines') mesh.add(new THREE.LineSegments(this._edges(shape), this._lineMat(hex, ghost)));
-      if (st.outline && !ghost) {
+      if (st.outline && !ghost && finish !== 'glow') {
         if (!this.outlineMat) this.outlineMat = new THREE.MeshBasicMaterial({ color: 0x1b1626, side: THREE.BackSide });
         const o = new THREE.Mesh(this._geo(shape), this.outlineMat);
         const t = 0.05; o.scale.set(1 + t / Math.max(w, 0.15), 1 + t / Math.max(h, 0.15), 1 + t / Math.max(d, 0.15));
         mesh.add(o);
       }
     }
-    if (st.shade !== 'lines') { mesh.castShadow = !ghost; mesh.receiveShadow = true; }
+    if (st.shade !== 'lines') { mesh.castShadow = !ghost && finish !== 'glow' && finish !== 'glass'; mesh.receiveShadow = finish !== 'glow'; }
     mesh.position.set(clamp(num(c[0]), -30, 30), clamp(num(c[1]), -5, 40), clamp(num(c[2]), -30, 30));
     if (Array.isArray(p[4])) mesh.rotation.set(num(p[4][0]) * D2R, num(p[4][1]) * D2R, num(p[4][2]) * D2R);
+    if (finish === 'glow' && !ghost) mesh.userData.glow = { hex, size: Math.max(w, h, d) };
     return mesh;
   }
 
   _group(parts, ghost) {
     const g = new THREE.Group();
-    for (const p of (Array.isArray(parts) ? parts.slice(0, 24) : [])) { const m = this._part(p, ghost); if (m) g.add(m); }
+    for (const p of (Array.isArray(parts) ? parts.slice(0, 24) : [])) {
+      const m = this._part(p, ghost); if (!m) continue; g.add(m);
+      // A glowing part gets a soft halo of its own light around it.
+      if (m.userData.glow) {
+        const key = `H|${m.userData.glow.hex}`;
+        if (!this.matCache.has(key)) this.matCache.set(key, glowBlend(new THREE.SpriteMaterial({ map: fxTexture('halo'), color: color(m.userData.glow.hex) }), 0.55));
+        const sp = new THREE.Sprite(this.matCache.get(key)); sp.userData.halo = true; sp.raycast = () => {};
+        sp.position.copy(m.position); sp.scale.setScalar(clamp(m.userData.glow.size * 2.4, 0.3, 10)); g.add(sp);
+        if (!g.userData.glow) g.userData.glow = { c: color(m.userData.glow.hex), y: m.position.y };
+      }
+    }
     return g;
+  }
+  // The bounds of an object's own parts, leaving out the halos around glowing ones.
+  _box(g, box = new THREE.Box3()) {
+    box.makeEmpty(); g.updateWorldMatrix(true, false);
+    for (const ch of g.children) if (!ch.userData.halo) box.expandByObject(ch);
+    return box;
   }
 
   _place(g, x, z, ry, s, anim, pop, delay, parent = this.root, o = {}) {
@@ -346,8 +405,10 @@ export class Stage {
   _addObj(o, pop, delay) {
     const at = Array.isArray(o.at) ? o.at : [0, 0];
     const g = this._group(o.parts, Boolean(o.ghost));
-    if (o.y) g.children.forEach((c) => { c.position.y += num(o.y); });
+    if (o.y) { g.children.forEach((c) => { c.position.y += num(o.y); }); if (g.userData.glow) g.userData.glow.y += num(o.y); }
+    const glow = g.userData.glow;
     this._place(g, at[0], at.length > 2 ? at[2] : at[1], o.ry, o.s, o.anim, pop, delay, this.root, o);
+    if (glow) g.userData.actor.glow = glow;
     if (o.id != null) this.groups.set(String(o.id), g);
     this._focus(g);
   }
@@ -356,7 +417,7 @@ export class Stage {
   _focus(g) {
     if (this.mode === 'diagram' || this.focusN >= 4) return;
     const keep = g.scale.x; g.scale.setScalar(g.userData.s); g.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(g); g.scale.setScalar(keep);
+    const box = this._box(g); g.scale.setScalar(keep);
     if (box.isEmpty()) return;
     const size = box.getSize(new THREE.Vector3());
     if ((size.x > 11 || size.z > 11) && this.focusN > 0) return;
@@ -396,18 +457,19 @@ export class Stage {
     if (Array.isArray(ref)) return ref.length > 2 ? { x: num(ref[0]), y: num(ref[1]), z: num(ref[2]) } : { x: num(ref[0]), y: 0, z: num(ref[1]) };
     const g = this.groups.get(String(ref)); if (!g) return null;
     const u = g.userData, st = u.actor?.st;
-    if (u.h == null) { const keep = g.scale.clone(); g.scale.setScalar(u.s); g.updateMatrixWorld(true); const b = new THREE.Box3().setFromObject(g); g.scale.copy(keep); u.h = b.isEmpty() ? 1 : clamp(b.max.y, 0.2, 8); }
+    if (u.h == null) { const keep = g.scale.clone(); g.scale.setScalar(u.s); const b = this._box(g); g.scale.copy(keep); u.h = b.isEmpty() ? 1 : clamp(b.max.y, 0.2, 8); }
     return { x: st ? st.x : u.x, y: (st ? st.y : 0) + u.h * 0.6, z: st ? st.z : u.z, body: true, g };
   }
   _addAct(o, pop) {
     if (!ACTS.includes(o.do)) return;
     const c = { o, key: actKey(o), do: o.do, id: o.id != null ? String(o.id) : null, step: clamp(Math.round(num(o.step, 1)), 0, 8), dur: clamp(num(o.dur, 1.3), 0.3, 6) };
-    if (c.do === 'flow') {
+    if (FX.includes(c.do)) { c.fx = makeFx(this, o, c.key); if (!c.fx) return; c.parts = [c.fx.group]; this.disposables.push(c.fx); }
+    else if (c.do === 'flow') {
       const def = this.defs.get(String(o.of)), n = clamp(Math.round(num(o.n, 5)), 1, 12);
       c.parts = Array.from({ length: n }, () => { const g = this._group(def ? def.parts : [['sphere', [0, 0, 0], [0.26, 0.26, 0.26], typeof o.color === 'string' ? o.color : '#6ec5ff']], false); g.visible = false; this.root.add(g); return g; });
       c.s = clamp(num(def?.s, 1) * num(o.s, 1), 0.05, 6);
       // A stream has to be seen from across the stage, so its pieces are never smaller than a fist.
-      const size = new THREE.Box3().setFromObject(c.parts[0]).getSize(new THREE.Vector3()), big = Math.max(size.x, size.y, size.z) || 0.26;
+      const size = this._box(c.parts[0]).getSize(new THREE.Vector3()), big = Math.max(size.x, size.y, size.z) || 0.26;
       c.s = clamp(c.s, 0.42 / big, 0.9 / big); c.arc = clamp(num(o.arc), 0, 6); c.dur = clamp(num(o.dur, 2.2), 0.6, 8);
     } else if (c.do === 'flash') {
       const mat = new THREE.MeshBasicMaterial({ color: color(o.color, '#ffd24a'), transparent: true, depthWrite: false, fog: false });
@@ -440,6 +502,7 @@ export class Stage {
   }
   _animate(t, now) {
     const { tt, D, rw } = this._clock(now);
+    this.lightReq = []; this.flashK = 0;
     for (const a of this.actors) {
       const u = a.g.userData, st = a.st = { x: u.x, y: 0, z: u.z, s: u.s, sy: 1, ry: u.ry, rz: 0, show: true, moving: false };
       let k = clamp((now - a.born) / 480, 0, 1);
@@ -454,6 +517,7 @@ export class Stage {
     }
     let look = null;
     for (const c of this.acts) {
+      if (c.fx) continue; // effects follow their objects, so they are placed after everything has moved
       const live = tt - c.step * D, raw = clamp(live / c.dur, 0, 1), k = raw * (1 - rw), e = easeInOut(k);
       if (c.do === 'look') { if (live >= 0 && rw < 0.5 && this.maxStep) look = c; continue; }
       if (c.do === 'flow') {
@@ -491,7 +555,7 @@ export class Stage {
     // The camera follows the story: a look act frames one thing for its step, then the view goes back.
     if (look !== (this.lookNow ?? null) && this.mode !== 'diagram') {
       const g = look && this.groups.get(look.id);
-      if (g) { const keep = g.scale.clone(); g.scale.setScalar(g.userData.s); g.updateMatrixWorld(true); const b = new THREE.Box3().setFromObject(g); g.scale.copy(keep); if (!b.isEmpty()) this._frameBox(b, look.o.zoom === 'close' ? 1.1 : 1.6); this.lookNow = look; }
+      if (g) { const keep = g.scale.clone(); g.scale.setScalar(g.userData.s); const b = this._box(g); g.scale.copy(keep); if (!b.isEmpty()) this._frameBox(b, look.o.zoom === 'close' ? 1.1 : 1.6); this.lookNow = look; }
       else { this._reframe(); this.lookNow = null; }
     }
     for (const a of this.actors) {
@@ -511,7 +575,11 @@ export class Stage {
       }
       if (st.moving && a.anim !== 'walk' && a.anim !== 'float') st.y += Math.abs(Math.sin(t * 7 + a.ph)) * 0.05 * s;
       g.visible = st.show; g.position.set(st.x, st.y, st.z); g.rotation.y = st.ry; g.rotation.z = st.rz; g.scale.set(st.s, st.s * st.sy, st.s);
+      if (a.glow && st.show && st.s > 0.05) this.fxLight(st.x, st.y + a.glow.y * st.s * st.sy, st.z, a.glow.c, 5 * clamp(st.s, 0.3, 3));
     }
+    // An effect from step 0 belongs to the place (a campfire, rain), so it runs on without winding back at each loop.
+    const run = (now - this.tl0) / 1000;
+    for (const c of this.acts) if (c.fx) c.fx.update(c.step ? { live: tt - c.step * D, rw, t, D } : { live: run, rw: 0, t, D });
     for (const c of this.counts) {
       const live = tt - c.step * D, k = clamp(live / c.dur, 0, 1), inK = clamp(live / 0.35, 0, 1) * (1 - rw);
       c.sp.visible = inK > 0; if (!c.sp.visible) continue;
@@ -519,6 +587,29 @@ export class Stage {
       c.tx.k = easeOutBack(inK);
     }
   }
+  // ---------- effects ----------
+  // Where an effect is: on an object (its bounds as they are this frame) or at a point [x,z] or [x,y,z].
+  fxTarget(ref) {
+    if (ref == null) return null;
+    if (Array.isArray(ref)) { const p = this._point(ref); const c = new THREE.Vector3(p.x, p.y, p.z); const box = new THREE.Box3(c.clone().subScalar(0.3), c.clone().addScalar(0.3)); return { c, box, size: new THREE.Vector3(0.6, 0.6, 0.6), point: true }; }
+    const g = this.groups.get(String(ref)); if (!g || !g.parent || !g.visible || g.scale.x < 0.05) return null;
+    const box = this._box(g); if (box.isEmpty()) return null;
+    return { c: box.getCenter(new THREE.Vector3()), box, size: box.getSize(new THREE.Vector3()) };
+  }
+  fxPoint(ref, where = 'center') {
+    const T = this.fxTarget(ref); if (!T) return null;
+    if (T.point) return { x: T.c.x, y: T.c.y, z: T.c.z };
+    return { x: T.c.x, y: where === 'top' ? T.box.max.y : T.c.y, z: T.c.z };
+  }
+  fxLight(x, y, z, c, i) { if (i > 0.05) this.lightReq.push({ x, y, z, c, i }); }
+  fxFlash(k) { this.flashK = Math.max(this.flashK, k); }
+  _shareLights() {
+    const req = this.lightReq.sort((a, b) => b.i - a.i);
+    this.fxLights.forEach((l, n) => { const r = req[n]; if (!r) { l.intensity = 0; return; } l.position.set(r.x, r.y, r.z); l.color.copy(r.c); l.intensity = r.i; });
+    // A lightning strike lights the whole scene for a moment.
+    this.hemi.intensity = this.hemiBase + this.flashK * 1.4; this.sun.intensity = this.sunBase + this.flashK * 0.8;
+  }
+
   _addMany(o, pop, delay) {
     const def = this.defs.get(String(o.of)); if (!def || !Array.isArray(o.at)) return;
     o.at.slice(0, 60).forEach((a, i) => {
@@ -593,7 +684,7 @@ export class Stage {
     const spot = (a, b) => Math.hypot(a.userData.x - b.userData.x, a.userData.z - b.userData.z) < 0.6;
     for (const [id, g] of this.groups) {
       if (/^(subject|setting|background|polish|motion|refine|remotion|staging)_/.test(id) || leaves.has(id) || !g.parent || !shown(g)) continue;
-      const box = new THREE.Box3().setFromObject(g); if (box.isEmpty()) continue;
+      const box = this._box(g); if (box.isEmpty()) continue;
       const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3()).multiplyScalar(0.3);
       const pts = [c, c.clone().add(new THREE.Vector3(sz.x, 0, 0)), c.clone().add(new THREE.Vector3(-sz.x, 0, 0)), c.clone().add(new THREE.Vector3(0, sz.y, 0)), c.clone().add(new THREE.Vector3(0, -sz.y, sz.z))];
       const blockers = new Set(); let seen = false;
@@ -601,7 +692,7 @@ export class Stage {
         const dir = p.clone().sub(cam), far = dir.length(); ray.set(cam, dir.normalize()); ray.far = far - 0.02;
         const hit = ray.intersectObject(this.root, true).find((h) => {
           if (!h.object.isMesh) return false; const tg = top(h.object);
-          return tg && tg !== g && !this.faded.has(tg) && shown(tg) && !g.getObjectById(h.object.id);
+          return tg && tg !== g && !tg.userData.fx && !this.faded.has(tg) && shown(tg) && !g.getObjectById(h.object.id);
         });
         if (!hit || !spot(top(hit.object), g)) { seen = true; break; }
         blockers.add(top(hit.object));
@@ -716,6 +807,7 @@ export class Stage {
     this.camera.lookAt(this.cam.x, this.cam.y, this.cam.z);
     this.diagram.position.lerp(this.diagramTarget, ease(0.08));
     this._animate(t, now);
+    this._shareLights();
     if (now - this.lastReveal > 500) { this.lastReveal = now; this._reveal(); }
     this._layoutTexts();
     for (const p of this.pulses) p.pulse.position.copy(p.curve.getPoint((t * 0.45 + p.ph) % 1));

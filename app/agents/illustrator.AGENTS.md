@@ -19,8 +19,10 @@ env — always the first line, exactly once:
 
 obj — one thing built from primitives:
 {"t":"obj","id":"fox","at":[x,z],"ry":30,"s":1,"anim":"bob","parts":[["sphere",[0,0.5,0],[0.9,0.5,0.5],"#d9601a"],["cone",[0.5,0.9,0.1],[0.15,0.25,0.1],"#d9601a",[0,0,-10]]]}
-- A part is [shape, centre, size, colour, rotation]. Shape is box, sphere, cyl, cone or torus. Centre is [x,y,z] relative to the object's base point on the ground. Size is the full [width, height, depth] of the part. Rotation [rx,ry,rz] in degrees is optional.
-- cyl and cone stand upright along y, cone tip up. torus lies flat; tilt it with rotation.
+- A part is [shape, centre, size, colour, rotation, finish]. Centre is [x,y,z] relative to the object's base point on the ground. Size is the full [width, height, depth] of the part. Rotation [rx,ry,rz] in degrees and finish are optional.
+- Shapes: box, sphere, cyl, cone, torus, pyramid (square base, four flat faces: a pyramid, a spire, a gem's point), wedge (a triangular prism with its ridge along x: a roof, a ramp, a slice), dome (half a sphere on its flat side: a dome, a mound, a helmet, a bowl upside down), capsule (a rounded rod: arms, legs, fingers, pills, logs). Pick the shape the thing really has: an Egyptian pyramid is one pyramid part, not a cone or a stack of boxes; a house roof is a wedge.
+- cyl, cone, pyramid and capsule stand upright along y, tips up. torus lies flat; tilt it with rotation.
+- Finish is "glow" (the part gives off light: a lamp, a screen, a lit window, eyes of a robot, lava, a magic orb, a neon sign; it shines with a halo and lights what is near it), "metal" (shiny reflective metal: steel, chrome, gold, a robot, a car body) or "glass" (see-through: windows, bottles, crystals, ice). Leave it out for everything else. With no rotation, the finish can come fifth: ["sphere",[0,2,0],[0.4,0.4,0.4],"#ffd27a","glow"].
 - Use 4 to 12 parts and make the silhouette readable at a glance: an animal needs body, head, snout or beak, ears, legs, tail; a person needs legs, torso, arms, head, hair or hat; a house needs walls, roof, door, window.
 - Parts must touch or overlap so the object reads as one thing, and the lowest part must rest on y=0 unless the thing floats or flies.
 - ry (turn, degrees), s (scale) and anim are optional. anim is an idle loop that shows the thing is alive: none, bob, sway, spin, hop, float, pulse, walk. It does not tell the story; act lines do (see Motion).
@@ -58,6 +60,18 @@ act — one motion in one step:
 - spin: one full turn: a mechanism working, a reveal.
 - look: {"t":"act","do":"look","id":"<id>","zoom":"close|wide","step":2} — the camera moves to frame that thing for the step. Use at most two, for the moment the paragraph zooms in on a detail.
 Every act may carry "dur" in seconds (default 1.3).
+
+Effects are acts too. They draw what shapes cannot: light, energy and weather. Never build lightning, sparks, electricity, fire, flames, smoke, steam clouds, laser or light beams, glows, magic, rain or snow out of boxes, spheres or cones; use an effect. An effect runs from its step until the scene ends. Use "step":0 for one that is part of the place from the start (a campfire, a storm, snow).
+- lightning: {"t":"act","do":"lightning","id":"<obj it strikes>","color":"#hex","step":1} — a forked bolt from the sky onto the thing, flickering, with a flash that lights the scene. Give "from":"<id>" or [x,y,z] for a bolt between two things (a Tesla coil to a rod). "n":2 for more bolts, "w":1.5 for thicker. For power, a strike, a sudden idea, an electrical charge, a storm.
+- electric: {"t":"act","do":"electric","id":"<id>","step":2} — arcs crackle over the thing. For something charged, a voltage, a short circuit, a machine working, a jolt.
+- sparks: {"t":"act","do":"sparks","id":"<id>","step":1} — sparks spray from the top of the thing. For grinding, welding, a collision, a spark of current, friction.
+- fire: {"t":"act","do":"fire","id":"<id>","step":0} — flames burn on top of the thing (logs, a torch, a candle, a burning building). "s" sets the size.
+- smoke: {"t":"act","do":"smoke","id":"<id>","step":1} — smoke drifts up from it: a chimney, an engine, something burnt, a factory, a volcano.
+- glow: {"t":"act","do":"glow","id":"<id>","color":"#hex","step":2} — the thing gives off light with a pulsing halo: energy stored, something magic, radioactive, hot, holy, important.
+- beam: {"t":"act","do":"beam","from":"<id>","to":"<id>","color":"#hex","step":2} — a straight beam of light between two things: a laser, a signal, energy being sent, a searchlight. "w" is its width (0.2 laser, 1 shaft of light); "spread":4 widens it toward "to" for a spotlight or a tractor beam.
+- sparkle: {"t":"act","do":"sparkle","id":"<id>","step":3} — stars twinkle around the thing: new, clean, valuable, magic, a discovery.
+- rain and snow: {"t":"act","do":"rain","step":0} — weather over the whole stage.
+Effects can take "at":[x,y,z] instead of "id" to happen at a point, and "color":"#hex". Use one to three effects in a scene, where the paragraph has light, energy, heat or weather; they count toward the 3 to 6 act lines. In a flow, a glowing droplet or packet ("glow" finish) reads better than a plain one.
 
 count — a number that runs up or down in front of the viewer:
 {"t":"count","at":[x,y,z],"from":0,"to":1900,"text":"{n} prompts","step":3}
@@ -130,7 +144,8 @@ A request with "task: improve" gives you the scene that is already on screen, as
 
 - To redraw a thing better, output an obj line with the same "id": it replaces the old one. Keep its "at" unless the placement was wrong. Give it 10 to 18 parts: add what makes it recognisable and charming (eyes, hands, feet, ears, handles, rims, windows, stripes, steam), fix parts that float or do not touch, and use two or three shades per object instead of one flat colour.
 - To add a thing, output an obj line with a new id, or a many line that repeats an obj from your own output or from the scene.
-- Never output label, gap, node or edge lines, and never repeat a line that would change nothing. Only the motion and remotion focuses output act and count lines, and only staging outputs a shot line.
+- Never output label, gap, node or edge lines, and never repeat a line that would change nothing. Only the motion and remotion focuses output act and count lines, except effects (lightning, electric, sparks, fire, smoke, glow, beam, sparkle, rain, snow), which the subject, setting, background, polish and refine focuses may add too. Only staging outputs a shot line.
+- If the scene has light, fire, lightning, electricity, a beam, smoke or magic built out of shapes (thin boxes for bolts, cones for flames, spheres for a glow), take it out with {"t":"drop","id":"<id>"} and output the effect instead. Give lamps, screens, windows at night and other light sources the "glow" finish.
 - An improve pass may imagine. Drop "ghost" from anything you redraw and give it your best guess at real colours and detail, whatever strict says. Add the setting and props any reader would picture around the subject (the plate and steamer under a dumpling, the room a desk stands in). Never contradict the paragraph, and never add a new character or event.
 - Do not put anything on top of or around an existing object: read the "at" positions in the scene and use free ground. Walls, masonry and rooms go behind the subject (more negative z) or beside it, never in front of it or over it.
 - In storyboard mode keep everything within x -4..4.
@@ -141,14 +156,14 @@ What each focus is for:
 - background: depth and atmosphere, 4 to 8 new obj or many lines: distant things at negative z, things in the sky, and small animated props. Do not redraw existing objects and do not output env.
 - motion: choreograph the scene so its motion tells the paragraph (see Motion). Output 3 to 6 act and count lines. To make a thing arrive later, output its obj line again, unchanged except for an added "step" and "in". You may add up to two small new obj lines that the motion needs (a droplet or packet for a flow, steam to rise). Change nothing else: no env, no many, no redrawing for looks.
 The last three run again and again on a finished scene, in turns, so each must make the scene better without making it bigger. Pick different things each time from the ones that already look right, and if nothing in your focus needs work, output nothing.
-- refine: how things look. Add no new objects. Redraw the one or two things that still look weakest (same ids, same "at"): better proportions, parts that touch, two or three shades, the details that make the thing recognisable. You may remove one thing that clutters the picture with {"t":"drop","id":"<id>"}. 1 to 3 lines.
+- refine: how things look. Add no new objects. Redraw the one or two things that still look weakest (same ids, same "at"): better proportions, parts that touch, two or three shades, the right shapes (pyramid, wedge, dome, capsule) and finishes, the details that make the thing recognisable. You may remove one thing that clutters the picture with {"t":"drop","id":"<id>"}, and replace an effect built from shapes with a drop and the effect act. 1 to 3 lines.
 - remotion: how things move. Read the paragraph, then the scene's act and count lines, and ask whether a viewer with the sound off would follow what happens and in what order. Fix what fails: replace an act that shows the wrong thing (an act that does the same thing to the same object in the same step replaces the old one), add one that is missing, give a thing a "step" and "in" by outputting its obj line again, correct an order or a "dur". Remove an act that is only decoration with {"t":"cut","do":"<do>","id":"<id>","step":<step>} (for a flow give "of" and "from" too; for a count use "do":"count" and its "at"). You may add one small obj a flow needs. 1 to 4 lines.
 - staging: how the scene is composed. Output only obj lines with existing ids that change "at", "ry" or "s" (parts unchanged), an env line (all its fields) when the sky, ground, light or fog could set the mood better, and in storyboard mode a shot line when another "cam" would frame the beat better. Move things that overlap, hide the subject or sit off to one side; turn characters to face what they act on; put the subject where the eye lands. You may drop one thing that blocks the view. 1 to 4 lines.
-- polish: look at the whole scene. Redraw the one or two things that still look weakest, and add two or three small details that tell the story.
+- polish: look at the whole scene. Redraw the one or two things that still look weakest, and add two or three small details that tell the story. One of them may be an effect, or a drop of an effect built from shapes.
 
 ## Colour
 
-The app redraws your scene in several visual styles (clay, low-poly, toon, voxel, neon, blueprint), so pick clear, distinct colours and chunky readable shapes. Avoid parts thinner than 0.05.
+The app redraws your scene in several visual styles (clay, low-poly, toon, voxel, neon, blueprint), so pick clear, distinct colours and chunky readable shapes. Avoid parts thinner than 0.05. At night or indoors, things that give off light (lamps, windows, screens, fires, stars) are what make the picture: give them the "glow" finish or an effect.
 
 ## Budget
 
