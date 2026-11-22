@@ -385,3 +385,21 @@ dialog::backdrop { background: rgba(5, 6, 10, .6); backdrop-filter: blur(3px); }
 .insp-row.fold.open > span, .insp-row.fold.open > .mini { margin-top: 3px; }
 .insp-row.fold.open .chips { flex-wrap: wrap; max-height: 88px; overflow-y: auto; -webkit-mask-image: none; mask-image: none; }
 .insp-row .fold-btn { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* The agent: who it is, and the chat with it */
+.agent-id { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.agent-id small { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+.ava { flex: none; display: inline-block; width: 28px; height: 28px; border-radius: 50%; overflow: hidden; }
+.ava svg { display: block; width: 100%; height: 100%; }
+.ava.big { width: 38px; height: 38px; }
+.persona-sel { width: auto; max-width: 150px; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--raise2); font-size: 12px; outline: none; }
+.chat-hello { display: flex; gap: 10px; align-items: flex-start; }
+.msg { display: flex; gap: 8px; margin-top: 12px; align-items: flex-start; }
+.msg.me { justify-content: flex-end; }
+.msg.me .bubble { max-width: 85%; background: rgba(255, 178, 63, .14); border: 1px solid rgba(255, 178, 63, .25); border-radius: 12px 12px 3px 12px; padding: 8px 11px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
+.msg.me .msg-x { opacity: 0; padding: 2px 6px; }
+.msg.me:hover .msg-x { opacity: 1; }
+.msg.them .reply { flex: 1; min-width: 0; }
+.msg.them .who { display: block; font-size: 12px; color: var(--muted); font-weight: 600; margin: 4px 0 4px; }
+.msg.them .reply > .bubble { background: var(--raise); border-radius: 3px 12px 12px 12px; padding: 9px 11px; font-size: 13.5px; line-height: 1.45; margin-bottom: 6px; }
+.msg.them .rs-srcs summary { color: var(--muted); font-size: 11.5px; cursor: pointer; margin-top: 4px; }

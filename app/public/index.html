@@ -96,7 +96,8 @@
 
   <aside class="coach">
     <div class="coach-head">
-      <h2>Agent</h2>
+      <div class="agent-id"><span id="agentAva"></span><div><h2 id="agentName">Agent</h2><small id="agentRole"></small></div></div>
+      <select id="personaSel" class="persona-sel" title="Who the agent is"></select>
       <span class="coach-status" id="coachStatus"></span>
       <button class="mini" id="reviewBtn" hidden>Review</button>
     </div>
@@ -111,7 +112,7 @@
     <nav class="tabs" id="tabs">
       <button data-tab="tips">Tips<i id="tipsCount"></i></button>
       <button data-tab="ideas">Ideas<i id="ideasCount"></i></button>
-      <button data-tab="research">Asks<i id="researchCount"></i></button>
+      <button data-tab="research">Chat<i id="researchCount"></i></button>
       <button data-tab="activity">Activity<i id="activityCount"></i></button>
       <button data-tab="history">History</button>
     </nav>
@@ -136,7 +137,7 @@
       <div id="nextWrap" hidden><h3>Add a next line</h3><div id="next"></div></div>
     </div>
     <div class="pane" data-pane="research" hidden>
-      <p class="empty" id="researchEmpty">What you send to the script shows up here: what the agent found, and every change it made, with Undo.</p>
+      <p class="empty chat-hello" id="researchEmpty"></p>
       <div id="research"></div>
     </div>
     <div class="pane" data-pane="activity" hidden>

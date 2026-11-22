@@ -1,5 +1,6 @@
 import { Stage, STYLES, STYLE_ORDER, actKey, FX, ACTS, registerStyle, unregisterStyle } from './scene.js';
 import { exportVideo, renderStill, CAPTION } from './export.js';
+import { PERSONAS, PERSONA_FOR_PACK, avatarHtml } from './personas.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -120,6 +121,7 @@ function loadProject(p) {
 
 // Everything that depends on the writing type.
 function applyPack() {
+  renderPersona();
   $('#typeBtn').textContent = S.pack.name;
   $$('#typeMenu button').forEach((b) => b.classList.toggle('on', b.dataset.id === S.pack.id));
   stage.setMode(S.pack.visual); stage.clear(); S.shown = null; $('#title').textContent = ''; showShot(null);
@@ -153,7 +155,7 @@ function markDirty(why = 'Edited') {
 }
 function snapshot(p) {
   p.name = $('#name').value.trim() || 'Untitled'; p.text = ta.value; p.pack = S.pack.id; p.coach = S.coach.saved;
-  p.research = S.coach.research.filter((r) => r.status === 'done').map(({ q, sources, lines, rewrote }) => ({ q, sources, lines, rewrote }));
+  p.research = S.coach.research.filter((r) => r.status === 'done').map(({ q, sources, lines, rewrote, persona }) => ({ q, sources, lines, rewrote, persona }));
   p.notes = notesOut();
   const f = S.coach.fills; p.fills = [...f.asked].filter((slot) => f.opts.get(slot)?.length).map((slot) => ({ slot, opts: f.opts.get(slot) }));
   const kept = new Map();
@@ -1541,12 +1543,14 @@ const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); 
 const wordCount = (t) => (String(t).match(/\S+/g) || []).length;
 function restoreResearch(saved) {
   const c = S.coach; c.research.forEach((r) => r.ctrl?.abort());
-  c.research = (Array.isArray(saved) ? saved : []).filter((r) => r && r.q).map((r) => ({ q: String(r.q), sources: r.sources || [], lines: r.lines || [], rewrote: r.rewrote, status: 'done' }));
+  c.research = (Array.isArray(saved) ? saved : []).filter((r) => r && r.q).map((r) => ({ q: String(r.q), sources: r.sources || [], lines: r.lines || [], rewrote: r.rewrote, persona: PERSONAS[r.persona] ? r.persona : undefined, status: 'done' }));
   renderResearch();
 }
 function renderResearch() {
-  const c = S.coach;
+  const c = S.coach, P = PERSONAS[personaKey()];
   $('#researchEmpty').hidden = c.research.length > 0;
+  // A conversation: oldest first, the writer's message on the right, the agent's reply under its avatar with
+  // everything it changed or found. Indexes stay those of c.research, which keeps the newest first.
   $('#research').innerHTML = c.research.map((r, i) => {
     const answer = r.lines.find((o) => o.k === 'answer'), over = r.status === 'done';
     const link = (o) => (o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener" title="${esc(o.title)}">${esc(hostOf(o.url))}</a>` : '');
@@ -1556,11 +1560,13 @@ function renderResearch() {
     const held = over && r.held ? `<div class="chg"><b>The draft changed while the agent worked.</b><span class="src">Its rewrite was made from the earlier text.</span><button class="mini" data-apply="${i}">Use the rewrite anyway</button></div>` : '';
     const undo = r.after != null ? `<div class="rs-undo" data-u="${i}"><button class="mini" data-undo="${i}">Undo these changes</button><span class="src">Edited since. Use History to go back.</span></div>` : '';
     const srcs = r.sources.map((s) => `<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.title)}">${esc(hostOf(s.url))}${s.published ? ' ' + esc(s.published.slice(0, 4)) : ''} · ${esc(s.title)}</a>`).join('');
-    return `<div class="rs"><div class="rs-q"><span>${esc(r.q)}</span><button class="mini" data-x="${i}" title="${r.status === 'done' || r.status === 'error' ? 'Remove' : 'Stop'}">×</button></div>`
+    const who = PERSONAS[r.persona] || P;
+    return `<div class="msg me"><div class="bubble">${esc(r.q)}</div><button class="mini msg-x" data-x="${i}" title="${r.status === 'done' || r.status === 'error' ? 'Remove from the chat' : 'Stop'}">×</button></div>`
+      + `<div class="msg them">${avatarHtml(r.persona || personaKey())}<div class="reply"><b class="who">${esc(who.name)}</b>`
       + `<div class="rs-status ${r.status === 'error' ? 'err' : ''}" data-s="${i}"></div>`
-      + (answer ? `<div class="line answer">${esc(answer.text)}</div>` : '') + (over ? rewrote + edits + held + undo : '') + finds
-      + (srcs ? `<div class="rs-srcs"><h3>Sources read</h3>${srcs}</div>` : '') + '</div>';
-  }).join('');
+      + (answer ? `<div class="bubble">${esc(answer.text)}</div>` : '') + (over ? rewrote + edits + held + undo : '') + finds
+      + (srcs ? `<details class="rs-srcs"><summary>Sources read (${r.sources.length})</summary>${srcs}</details>` : '') + '</div></div>';
+  }).reverse().join('');
   researchStatus(); renderCoach();
 }
 function researchStatus() {
@@ -1594,10 +1600,12 @@ async function applyAgent(r, anyway = false) {
 async function ask(q) {
   yieldToWriter();
   const c = S.coach; q = q.trim(); if (!S.pack || q.length < 3) return;
-  const r = { q, sent: ta.value, sources: [], lines: [], status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id };
-  c.research.unshift(r); renderResearch();
+  const r = { q, sent: ta.value, sources: [], lines: [], status: 'search', t0: performance.now(), ctrl: new AbortController(), project: S.project?.id, persona: personaKey() };
+  // The last few turns go along, so "shorter", "the other one" or "do that again" make sense to the agent.
+  const history = c.research.filter((x) => x.status === 'done').slice(0, 6).reverse().map((x) => ({ q: x.q, a: x.lines.find((o) => o.k === 'answer')?.text || '', did: didOf(x) }));
+  c.research.unshift(r); renderResearch(); scrollChat();
   try {
-    await sse('/api/ask', { pack: S.pack.id, text: r.sent, ask: q }, r.ctrl.signal, (ev) => {
+    await sse('/api/ask', { pack: S.pack.id, text: r.sent, ask: q, persona: PERSONAS[r.persona].voice, history }, r.ctrl.signal, (ev) => {
       if (ev.type === 'prompt') r.prompt = ev.text;
       else if (ev.type === 'sources') { r.sources = ev.sources || []; r.status = 'wait'; }
       else if (ev.type === 'first') r.status = 'gen';
@@ -1611,8 +1619,33 @@ async function ask(q) {
   if (!c.research.includes(r) || r.project !== S.project?.id) return;
   if (r.status === 'done' && !r.lines.some((o) => ['finding', 'answer', 'edit', 'draft'].includes(o.k))) { r.status = 'error'; r.error = 'Nothing came back. Try other words.'; }
   if (r.status === 'done') { await applyAgent(r); markDirty(r.after != null ? undefined : 'Coach notes'); }
-  renderResearch();
+  renderResearch(); scrollChat();
 }
+// What a turn did, in a few words, for the memory sent with the next one.
+function didOf(r) {
+  const n = (k) => r.lines.filter((o) => o.k === k).length;
+  return [r.rewrote ? 'rewrote the whole draft' : '', n('edit') ? `made ${n('edit')} edit${n('edit') === 1 ? '' : 's'}: ${r.lines.filter((o) => o.k === 'edit').slice(0, 3).map((o) => `"${o.quote}" -> "${o.text}"`).join('; ')}` : '', n('finding') ? `found ${n('finding')} fact${n('finding') === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ') || 'answered';
+}
+const scrollChat = () => requestAnimationFrame(() => { const m = $('#research .msg:last-child'); if (m && !$('[data-pane="research"]').hidden) m.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); });
+
+// ---------- persona ----------
+// Who the agent is: the writer's pick for this project, or the default for the writing type.
+const personaKey = () => (PERSONAS[S.project?.persona] ? S.project.persona : PERSONA_FOR_PACK[S.pack?.id] || 'cutter');
+function renderPersona() {
+  const k = personaKey(), P = PERSONAS[k];
+  $('#agentAva').innerHTML = avatarHtml(k, 'big'); $('#agentName').textContent = P.name; $('#agentRole').textContent = P.role;
+  const sel = $('#personaSel');
+  if (!sel.options.length) sel.innerHTML = Object.entries(PERSONAS).map(([key, x]) => `<option value="${key}">${esc(x.name)}, ${esc(x.role)}</option>`).join('');
+  sel.value = k; sel.title = S.project?.persona ? 'Your pick for this project' : `The default for ${S.pack?.name || 'this writing type'}`;
+  $('#steerText').placeholder = `Ask ${P.name}: rewrite the hook, fill the blanks, set this scene at night`;
+  $('#researchEmpty').innerHTML = `${avatarHtml(k)}<span>${esc(P.hello)}</span>`;
+}
+$('#personaSel').addEventListener('change', (e) => {
+  if (!S.project) return;
+  // Picking the type's own default goes back to following the type.
+  S.project.persona = e.target.value === PERSONA_FOR_PACK[S.pack?.id] ? null : e.target.value;
+  renderPersona(); renderResearch(); markDirty(`Agent is now ${PERSONAS[personaKey()].name}`);
+});
 $('#research').addEventListener('click', async (e) => {
   const c = S.coach, x = e.target.closest('[data-x]'), f = e.target.closest('button.line'), u = e.target.closest('[data-undo]'), a = e.target.closest('[data-apply]');
   if (x) { const [r] = c.research.splice(Number(x.dataset.x), 1); r?.ctrl?.abort(); renderResearch(); markDirty('Coach notes'); }

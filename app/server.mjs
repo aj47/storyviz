@@ -44,6 +44,7 @@ function buildProject(id, b) {
     id, name: String(b.name || 'Untitled').slice(0, 80), pack: String(b.pack || ''), text: String(b.text || '').slice(0, 200_000),
     scenes: Array.isArray(b.scenes) ? b.scenes.slice(0, 200) : [], coach: b.coach && typeof b.coach === 'object' ? b.coach : null,
     research: Array.isArray(b.research) ? b.research.slice(0, 30) : [],
+    persona: typeof b.persona === 'string' && /^[a-z]{2,20}$/.test(b.persona) ? b.persona : null,
     // The scratch pad: the writer's own notes, the agent's research cards, and lines it suggests for the script.
     notes: b.notes && typeof b.notes === 'object' ? {
       mine: String(b.notes.mine || '').slice(0, 100_000),
@@ -387,9 +388,11 @@ function factRequest(pack, text, checks, sources) {
     `sources:\n${sourceList(sources)}`,
   ].join('\n\n');
 }
-function agentRequest(pack, text, ask, sources) {
+function agentRequest(pack, text, ask, sources, persona = '', history = []) {
   return [
     'mode: agent', `writing type: ${pack.name}`, `factual: ${pack.factual ? 'yes' : 'no'}`,
+    ...(persona ? [`persona: ${persona}`] : []),
+    ...(history.length ? [`conversation so far (oldest first):\n${history.map((h) => `writer: ${h.q}\nyou: ${h.a || '(no reply)'}${h.did ? ` [${h.did}]` : ''}`).join('\n')}`] : []),
     `the writer's instruction:\n"""\n${ask}\n"""`,
     `draft:\n"""\n${String(text).slice(0, 9000)}\n"""`,
     `sources:\n${sources.length ? sourceList(sources) : 'none'}`,
@@ -408,7 +411,7 @@ function fillRequest(pack, text, blanks, sources) {
 // of it. The web search runs first and its sources go to the page at once, so there is something to read
 // while the model request waits in the queue.
 const LOOKUP = /research|look ?up|find|search|fact|source|check|verify|how (much|many|long|old|big)|who |when |where |statistic|number|data|fill/i;
-async function streamAgent(res, pack, text, ask) {
+async function streamAgent(res, pack, text, ask, persona = '', history = []) {
   const send = openStream(res);
   let sources = [];
   if (pack.factual || LOOKUP.test(ask)) {
@@ -428,7 +431,7 @@ async function streamAgent(res, pack, text, ask) {
     if ((o.k === 'draft' || o.k === 'answer') && !o.text) return null;
     return JSON.stringify(s ? { ...o, title: s.title, url: s.url } : o);
   };
-  const r = res.destroyed ? null : await runAgent(res, send, 'coach', agentRequest(pack, text, ask, sources), { maxTokens: 7000, shape: cite });
+  const r = res.destroyed ? null : await runAgent(res, send, 'coach', agentRequest(pack, text, ask, sources, persona, history), { maxTokens: 7000, shape: cite });
   if (r) send(r.done);
   res.end();
 }
@@ -615,7 +618,9 @@ const server = http.createServer(async (req, res) => {
       const pack = loadPacks().find((p) => p.id === b.pack);
       const ask = String(b.ask || '').trim().slice(0, 600);
       if (!pack || ask.length < 3) { res.writeHead(400); res.end('unknown pack or empty instruction'); return; }
-      return streamAgent(res, pack, b.text || '', ask);
+      const persona = String(b.persona || '').slice(0, 300);
+      const history = (Array.isArray(b.history) ? b.history : []).slice(-6).map((h) => ({ q: String(h?.q || '').slice(0, 300), a: String(h?.a || '').slice(0, 300), did: String(h?.did || '').slice(0, 300) })).filter((h) => h.q);
+      return streamAgent(res, pack, b.text || '', ask, persona, history);
     }
     if (req.method === 'POST' && (url.pathname === '/api/notes/research' || url.pathname === '/api/notes/suggest')) {
       const b = await readBody(req);
