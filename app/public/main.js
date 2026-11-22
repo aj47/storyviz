@@ -663,7 +663,11 @@ function redraw() {
 // ---------- guide ----------
 // The writer tells the illustrator what to change. A request still in the queue for this paragraph is
 // replaced, because the direction changes what it should draw; a finished drawing is updated in place.
-function guideScene(idx, guide, caption) {
+// A direction that changes how the subject is shown, rather than adjusting it, redraws the scene from scratch:
+// an update keeps everything earlier passes added, so "the quartz lines the walls, not a separate crystal" would
+// otherwise leave the crystal standing.
+const REMAKE = /\b(remake|redo|re-?draw|rebuild|start (over|again)|from scratch|instead|rather than|not as|not an? |completely|entirely|totally|whole scene|different(ly)?|wrong)\b/i;
+function guideScene(idx, guide, caption, remake = REMAKE.test(guide)) {
   const p = S.paras[idx]; if (!p || p.text.length < 12) return;
   // "Remove the on-screen text" does not need the model: the text comes off at once. The direction is still
   // sent and kept with the scene, so later passes do not put text back.
@@ -675,7 +679,8 @@ function guideScene(idx, guide, caption) {
     stopImproving(old); S.scenes.delete(key);
     if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); from = old; }
   }
-  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from, caption: caption ?? old?.caption, keep: old }); renderPages();
+  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from: remake ? null : from, fresh: remake, caption: caption ?? old?.caption, keep: old }); renderPages();
+  if (remake) markDirty(`Scene ${idx + 1} remade: ${guide.trim().slice(0, 50)}`);
 }
 
 // ---------- scene inspector ----------
@@ -713,7 +718,7 @@ function renderInspector() {
   $('#capRow').hidden = mode !== 'storyboard'; $('#motionRow').hidden = mode === 'diagram';
   renderLength(sc);
   const cap = $('#capInput'), dir = $('#dirInput');
-  cap.disabled = !sc; dir.disabled = !drawable; $('#dirBtn').disabled = !drawable;
+  cap.disabled = !sc; dir.disabled = !drawable; $('#dirBtn').disabled = $('#remakeBtn').disabled = !drawable;
   $('#animateBtn').disabled = !sc || sc.status !== 'done' || Boolean(sc.wantMotion) || Boolean(sc.imps);
   const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || l.t === 'label' || (l.t === 'obj' && l.step)) : [];
   renderThings();
@@ -734,7 +739,7 @@ function renderInspector() {
 $('#capInput').addEventListener('change', () => setCaption(S.cur, $('#capInput').value));
 $('#capInput').addEventListener('input', () => { const sc = sceneNow(); if (sc && S.shown === sc) placeCaption($('#capInput').value); });
 $('#capInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
-$('#dirForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(S.cur, $('#dirInput').value); $('#dirInput').blur(); });
+$('#dirForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(S.cur, $('#dirInput').value, undefined, e.submitter?.id === 'remakeBtn' ? true : undefined); $('#dirInput').blur(); });
 $('#motion').addEventListener('click', (e) => {
   const b = e.target.closest('button'), sc = sceneNow(); if (!b || !sc) return;
   if (b.dataset.key) {
@@ -1059,6 +1064,7 @@ const ALLOWED = { motion: ['obj', 'act', 'count'], polish: ['obj', 'many', 'drop
 const needsMotion = (sc) => (sc.round || 0) >= 1 && !sc.motionTried && !sc.lines.some((l) => (l.t === 'act' && !FX.includes(l.do)) || l.step);
 // Effects (fire, lightning, glow...) are part of how a scene looks, so the passes that work on looks may add them too.
 const FX_FOCUS = ['subject', 'setting', 'background', 'polish', 'refine'];
+const FULL_SCENE = 22;
 let improving = null;
 const stopImproving = (sc = improving) => sc?.imps?.forEach((i) => i.ctrl.abort());
 function nextToImprove() {
@@ -1118,6 +1124,8 @@ async function improveOnce(sc, focus, note = '') {
         if (!fx && !(ALLOWED[focus] || ['obj', 'many', 'env']).includes(o.t)) return;
         // Refining may redraw what is there, never add: the scene must not grow without end.
         if ((focus === 'refine' || focus === 'staging') && o.t === 'obj' && !had.has(String(o.id))) return;
+        // A full scene gets no more things from polish passes, only better versions of what is there.
+        if (focus === 'polish' && (o.t === 'obj' || o.t === 'many') && !had.has(String(o.id)) && had.size >= FULL_SCENE) return;
         if (o.t === 'shot') { const old = sc.lines.find((l) => l.t === 'shot'); if (!old) return; o = { ...old, cam: o.cam || old.cam }; }
         if (o.t === 'act') for (const f of ['id', 'of', 'from', 'to']) if (renamed.has(String(o[f]))) o[f] = renamed.get(String(o[f]));
         if (o.t === 'env') { if (focus !== 'setting' && focus !== 'staging') return; delete o.title; }
