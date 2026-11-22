@@ -161,6 +161,19 @@ The last three run again and again on a finished scene, in turns, so each must m
 - staging: how the scene is composed. Output only obj lines with existing ids that change "at", "ry" or "s" (parts unchanged), an env line (all its fields) when the sky, ground, light or fog could set the mood better, and in storyboard mode a shot line when another "cam" would frame the beat better. Move things that overlap, hide the subject or sit off to one side; turn characters to face what they act on; put the subject where the eye lands. You may drop one thing that blocks the view. 1 to 4 lines.
 - polish: look at the whole scene. Redraw the one or two things that still look weakest, and add two or three small details that tell the story. One of them may be an effect, or a drop of an effect built from shapes.
 
+## Style task
+
+A request with "task: style" gives a visual style the writer described in words ("80s synthwave", "film noir", "Game Boy", "watercolour storybook", "chrome toys"). Do not draw a scene. Output exactly one line, a style for the renderer that redraws every scene in that look:
+{"t":"style","label":"2-3 words","shade":"standard|flat|toon|lines|voxel","rough":0.8,"metal":0,"emissive":0,"hue":0,"sat":0,"light":[0.2,0.85],"palette":["#hex",...],"paletteK":0.85,"duotone":["#dark","#light"],"tint":"#hex","tintK":0.2,"outline":"#hex","outlineW":0.05,"sky":["#top","#horizon"],"ground":"#hex","fog":0.3,"lightMode":"day|dusk|night|indoor","fill":"#hex","fillOpacity":1,"line":"#hex","grid":["#hex","#hex"],"filter":"contrast(120%) saturate(80%)","pixel":1,"vignette":0}
+Every field except t, label and shade is optional; leave out what the style does not need.
+- shade: standard (soft lit, like clay or plastic), flat (faceted low-poly), toon (cel-shaded bands; pair with outline), lines (wireframe edges over a flat fill: neon, blueprint, hologram, schematic; uses fill, fillOpacity, line, grid), voxel (built of little cubes).
+- rough 0 to 1 (0 glossy, 1 matte), metal 0 to 1 (chrome, gold), emissive 0 to 1 (everything glows from inside: neon, hologram, candy).
+- Colour of every part: hue turns it (degrees), sat adds or removes saturation (-1 grey to 1 vivid), light clamps its lightness [min,max] (pastels [0.7,0.92], moody [0.08,0.5]). palette pulls every colour toward the nearest of 3 to 8 colours by paletteK (a limited palette: Game Boy greens, risograph inks, a film's colour grade). duotone maps everything onto two inks by brightness (noir, sepia, a two-colour print); it wins over palette. tint mixes one colour into everything by tintK.
+- outline: colour of the ink line around every part (cartoon, comic, cel), outlineW its thickness 0.02 to 0.15.
+- sky, ground, fog (0 clear to 1 thick) and lightMode replace each scene's own; give them when the style has a set mood (synthwave dusk, noir night, pastel day), leave them out to keep each scene's.
+- Whole picture: filter is a CSS filter made only of blur, brightness, contrast, grayscale, hue-rotate, invert, saturate and sepia; pixel 1 to 8 makes chunky pixels (retro games: 4 to 6); vignette 0 to 0.9 darkens the corners.
+Pick the few settings that make the style unmistakable, and keep scenes readable: the subject must still stand out.
+
 ## Colour
 
 The app redraws your scene in several visual styles (clay, low-poly, toon, voxel, neon, blueprint), so pick clear, distinct colours and chunky readable shapes. Avoid parts thinner than 0.05. At night or indoors, things that give off light (lamps, windows, screens, fires, stars) are what make the picture: give them the "glow" finish or an effect.

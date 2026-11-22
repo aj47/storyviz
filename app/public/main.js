@@ -1,4 +1,4 @@
-import { Stage, STYLES, STYLE_ORDER, actKey, FX } from './scene.js';
+import { Stage, STYLES, STYLE_ORDER, actKey, FX, registerStyle, unregisterStyle } from './scene.js';
 import { exportVideo, CAPTION } from './export.js';
 
 const $ = (s) => document.querySelector(s);
@@ -57,6 +57,7 @@ async function boot() {
   const q = new URLSearchParams(location.search);
   if (q.get('hold')) { const im = new Image(); im.hidden = true; im.src = '/api/hold?ms=' + Number(q.get('hold')); document.body.appendChild(im); }
   if (q.get('style') || q.has('nocycle')) S.restyle = false;
+  loadCustomStyles();
   setStyle(Math.max(0, STYLE_ORDER.indexOf(q.get('style') || store.get('style'))));
   $('#restyleSw').checked = S.restyle; $('#improveSw').checked = S.improve; $('#fillSw').checked = !S.strict; $('#liveSw').checked = S.live;
   for (const [id, k] of AUTOS) $('#' + id).checked = S.auto[k];
@@ -246,12 +247,59 @@ function bindMenu(btn, menu) { btn.addEventListener('click', (e) => { e.stopProp
 function buildMenus() {
   const types = S.packs.map((p) => `<button data-id="${esc(p.id)}"><b>${esc(p.name)}</b><small>${esc(p.blurb || '')}</small></button>`).join('');
   $('#typeMenu').innerHTML = types; $('#newTypes').innerHTML = types;
-  $('#styleMenu').innerHTML = STYLE_ORDER.map((n, i) => `<button data-i="${i}">${esc(STYLES[n].label)}</button>`).join('');
+  renderStyleMenu();
   bindMenu($('#typeBtn'), $('#typeMenu')); bindMenu($('#styleBtn'), $('#styleMenu'));
   $('#typeMenu').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setType(b.dataset.id); });
   // Picking a style by hand means you want to keep it, so auto restyle switches off.
-  $('#styleMenu').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; setRestyle(false); setStyle(Number(b.dataset.i)); });
+  $('#styleMenu').addEventListener('click', (e) => {
+    // Typing a new style keeps the menu open.
+    if (e.target.closest('.style-new')) { e.stopPropagation(); return; }
+    const del = e.target.closest('[data-del]'); if (del) { e.stopPropagation(); deleteCustomStyle(del.dataset.del); return; }
+    const b = e.target.closest('button[data-i]'); if (!b) return; setRestyle(false); setStyle(Number(b.dataset.i));
+  });
+  $('#styleMenu').addEventListener('submit', (e) => { e.preventDefault(); const t = $('#styleAsk').value.trim(); if (t.length >= 3) makeCustomStyle(t); });
   setStyle(S.styleIdx);
+}
+
+// ---------- styles described in words ----------
+// The writer describes a look ("80s synthwave", "film noir", "watercolour storybook") and Kimi answers with a style
+// spec for the renderer. It restyles every scene and the export at once, without redrawing anything. Described
+// styles are kept in this browser and sit in the menu next to the built-in ones.
+const customStyles = () => { try { return JSON.parse(store.get('customStyles') || '{}'); } catch { return {}; } };
+function loadCustomStyles() { for (const [name, c] of Object.entries(customStyles())) if (c?.spec) registerStyle(name, c.spec); }
+function renderStyleMenu() {
+  const busy = S.styleAsk;
+  $('#styleMenu').innerHTML = STYLE_ORDER.map((n, i) => STYLES[n].custom
+    ? `<div class="sty"><button data-i="${i}" title="${esc(customStyles()[n]?.text || '')}">${esc(STYLES[n].label)}</button><button class="del" data-del="${esc(n)}" title="Remove this style">×</button></div>`
+    : `<button data-i="${i}">${esc(STYLES[n].label)}</button>`).join('')
+    + `<form class="style-new"><input id="styleAsk" placeholder="Describe a style: film noir, 80s synthwave…" maxlength="200" autocomplete="off" ${busy ? 'disabled' : ''}><button type="submit" ${busy ? 'disabled' : ''}>Make</button><small id="styleStatus">${esc(S.styleStatus || '')}</small></form>`;
+  $$('#styleMenu button[data-i]').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === S.styleIdx));
+}
+const styleStatus = (t) => { S.styleStatus = t; const el = $('#styleStatus'); if (el) el.textContent = t; };
+function hashText(t) { let h = 5381; for (let i = 0; i < t.length; i++) h = (Math.imul(h, 33) ^ t.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
+async function makeCustomStyle(text) {
+  if (S.styleAsk) return;
+  S.styleAsk = new AbortController(); renderStyleMenu(); styleStatus('Asking Kimi…');
+  let spec = null, err = '';
+  try {
+    await sse('/api/style', { text }, S.styleAsk.signal, (ev) => {
+      if (ev.type === 'wait') styleStatus(`${Math.round(ev.ms / 1000)}s in the Cerebras queue`);
+      else if (ev.type === 'first') styleStatus('Designing the style…');
+      else if (ev.type === 'line') { const o = parseLine(ev.raw); if (o && typeof o === 'object' && (o.t === 'style' || o.shade)) spec = o; }
+      else if (ev.type === 'error') err = ev.message;
+    });
+  } catch (e) { err = e.message; }
+  S.styleAsk = null;
+  if (!spec) { styleStatus(err ? `Failed: ${err.slice(0, 80)}` : 'No style came back. Try again or describe it differently.'); renderStyleMenu(); return; }
+  const name = 'c_' + hashText(text.toLowerCase());
+  registerStyle(name, spec);
+  store.set('customStyles', JSON.stringify({ ...customStyles(), [name]: { text, spec } }));
+  S.styleStatus = ''; renderStyleMenu(); setRestyle(false); setStyle(STYLE_ORDER.indexOf(name));
+}
+function deleteCustomStyle(name) {
+  const cur = STYLE_ORDER[S.styleIdx], all = customStyles(); delete all[name]; store.set('customStyles', JSON.stringify(all));
+  unregisterStyle(name); renderStyleMenu();
+  setStyle(cur === name ? 0 : Math.max(0, STYLE_ORDER.indexOf(cur)));
 }
 document.addEventListener('click', closeMenus);
 document.addEventListener('keydown', (e) => {
@@ -266,7 +314,7 @@ function setStyle(i) {
   S.styleIdx = ((i % STYLE_ORDER.length) + STYLE_ORDER.length) % STYLE_ORDER.length;
   const name = STYLE_ORDER[S.styleIdx]; stage.setStyle(name); store.set('style', name);
   $('#styleBtn').textContent = STYLES[name].label;
-  $$('#styleMenu button').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === S.styleIdx));
+  $$('#styleMenu button[data-i]').forEach((b) => b.classList.toggle('on', Number(b.dataset.i) === S.styleIdx));
 }
 function setRestyle(on) { S.restyle = on; store.set('restyle', on ? '1' : '0'); $('#restyleSw').checked = on; }
 $('#restyleSw').onchange = (e) => setRestyle(e.target.checked);
@@ -1568,7 +1616,7 @@ function autotype(text, cps) {
 // ---------- transport ----------
 // Every request is timed, so Activity can show where the minutes went.
 const kindOf = (url, body) => (url === '/api/scene' ? (body.improve ? (body.focus === 'motion' ? 'Motion' : 'Improving looks') : 'Drawing scenes')
-  : { '/api/coach': 'Reviewing the draft', '/api/facts': 'Checking facts', '/api/fill': 'Suggesting blanks', '/api/ask': 'Agent' }[url] || url);
+  : { '/api/style': 'Making a style', '/api/coach': 'Reviewing the draft', '/api/facts': 'Checking facts', '/api/fill': 'Suggesting blanks', '/api/ask': 'Agent' }[url] || url);
 async function sse(url, body, signal, onEvent) {
   const kind = kindOf(url, body), t0 = performance.now(); let first = 0;
   const tally = () => {

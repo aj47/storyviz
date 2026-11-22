@@ -98,7 +98,7 @@ function boltLayers(paths, w) {
 class Effect {
   constructor(stage, o, key) {
     this.stage = stage; this.o = o; this.seed = strHash(key);
-    this.color = col(o.color, this.defaultColor || '#ffffff');
+    this.color = stage.styleColor ? stage.styleColor('#' + col(o.color, this.defaultColor || '#ffffff').getHexString()) : col(o.color, this.defaultColor || '#ffffff');
     this.group = new THREE.Group(); this.group.userData.fx = true; this.group.visible = false;
     stage.root.add(this.group);
   }

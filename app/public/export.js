@@ -51,10 +51,17 @@ export async function exportVideo({ scenes, mode, style, size, fps = 30, onFrame
       for (let f = 0; f < frames; f++) {
         if (signal?.aborted) throw new DOMException('Export cancelled', 'AbortError');
         const gl = stage.renderAt((f / fps) * 1000);
-        const [top, hor] = stage.sky, g = ctx.createLinearGradient(0, 0, 0, H);
+        const [top, hor] = stage.sky, g = ctx.createLinearGradient(0, 0, 0, H), post = stage.post;
         g.addColorStop(0, top); g.addColorStop(0.62, hor); g.addColorStop(1, hor);
+        ctx.filter = post.filter || 'none';
         ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+        ctx.imageSmoothingEnabled = post.pixel <= 1; // chunky pixels stay sharp when scaled up
         ctx.drawImage(gl, 0, 0, W, H);
+        ctx.filter = 'none'; ctx.imageSmoothingEnabled = true;
+        if (post.vignette) {
+          const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);
+          v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, `rgba(0,0,0,${post.vignette})`); ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+        }
         if (sc.caption) drawCaption(ctx, sc.caption, W, H, sc.capPos, sc.capSize);
         await source.add(n / fps, 1 / fps);
         n++;

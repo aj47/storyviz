@@ -479,6 +479,9 @@ function sceneRequest(b) {
   return parts.join('\n\n');
 }
 
+// A visual style the writer described in words, turned by the illustrator into settings for the renderer.
+const styleRequest = (text) => `task: style\n\nstyle described by the writer:\n"""\n${String(text).slice(0, 200)}\n"""`;
+
 function coachRequest(pack, text) {
   const slim = {
     type: pack.name,
@@ -524,6 +527,15 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const send = openStream(res);
       const r = await runAgent(res, send, 'illustrator', sceneRequest(b), { charsPerToken: 1.85, useCache: !b.fresh });
+      if (r) send(r.done);
+      res.end(); return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/style') {
+      const b = await readBody(req);
+      const text = String(b.text || '').trim();
+      if (text.length < 3) { res.writeHead(400); res.end('describe the style'); return; }
+      const send = openStream(res);
+      const r = await runAgent(res, send, 'illustrator', styleRequest(text), { maxTokens: 3000, charsPerToken: 2.2 });
       if (r) send(r.done);
       res.end(); return;
     }

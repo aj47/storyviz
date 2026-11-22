@@ -19,6 +19,44 @@ export const STYLES = {
 };
 export const STYLE_ORDER = ['clay', 'lowpoly', 'toon', 'voxel', 'neon', 'blueprint'];
 
+// A style the writer described in words. The model answers with a spec; only known fields with sane values are
+// kept, so a bad answer can never break the stage. It changes how every scene is drawn, never what is in it.
+const HEX = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v.trim()) ? v.trim().toLowerCase() : null);
+const hexes = (v, max) => (Array.isArray(v) ? v.map(HEX).filter(Boolean).slice(0, max) : []);
+const FILTER_RE = /^(\s*(blur|brightness|contrast|grayscale|hue-rotate|invert|saturate|sepia)\(\s*-?\d+(\.\d+)?(px|deg|%)?\s*\))+\s*$/;
+const numIn = (v, a, b) => (Number.isFinite(Number(v)) ? clamp(Number(v), a, b) : undefined);
+export function makeStyle(o = {}) {
+  const shade = ['standard', 'flat', 'toon', 'lines', 'voxel'].includes(o.shade) ? o.shade : 'standard';
+  const st = { label: String(o.label || 'Custom').replace(/\s+/g, ' ').trim().slice(0, 22) || 'Custom', custom: true };
+  if (shade === 'voxel') Object.assign(st, { shade: 'standard', voxel: true, seg: 'lo' });
+  else Object.assign(st, { shade, seg: o.seg === 'lo' || shade === 'flat' || shade === 'lines' ? 'lo' : 'hi' });
+  const set = (k, v) => { if (v !== undefined && v !== null) st[k] = v; };
+  set('rough', numIn(o.rough, 0, 1)); set('metal', numIn(o.metal, 0, 1)); set('emissive', numIn(o.emissive, 0, 1));
+  set('hue', numIn(o.hue, -180, 180)); set('sat', numIn(o.sat, -1, 1));
+  if (Array.isArray(o.light) && o.light.length === 2) { const a = numIn(o.light[0], 0, 1), b = numIn(o.light[1], 0, 1); if (a != null && b != null && a < b) st.light = [a, b]; }
+  const tint = HEX(o.tint); if (tint) { st.tintColor = tint; st.tint = numIn(o.tintK, 0, 1) ?? 0.2; }
+  const pal = hexes(o.palette, 10); if (pal.length >= 2) { st.palette = pal; st.paletteK = numIn(o.paletteK, 0, 1) ?? 0.85; }
+  const duo = hexes(o.duotone, 2); if (duo.length === 2) st.duotone = duo;
+  if (o.outline === true || HEX(o.outline)) { st.outline = true; st.outlineColor = HEX(o.outline) || '#1b1626'; set('outlineW', numIn(o.outlineW, 0.01, 0.2)); }
+  const sky = hexes(o.sky, 2); if (sky.length === 2) st.sky = sky;
+  set('ground', HEX(o.ground)); set('fog', numIn(o.fog, 0, 1));
+  if (['day', 'dusk', 'night', 'indoor'].includes(o.lightMode)) st.lightMode = o.lightMode;
+  if (shade === 'lines') {
+    st.fill = HEX(o.fill) || '#05060c'; st.fillOpacity = numIn(o.fillOpacity, 0, 1) ?? 1; set('line', HEX(o.line));
+    const grid = hexes(o.grid, 2); if (grid.length === 2) st.grid = grid;
+  }
+  if (typeof o.filter === 'string' && o.filter.length < 160 && FILTER_RE.test(o.filter)) st.filter = o.filter.trim();
+  set('pixel', o.pixel != null ? Math.round(numIn(o.pixel, 1, 8) ?? 1) : undefined); set('vignette', numIn(o.vignette, 0, 0.9));
+  return st;
+}
+// Add (or replace) a described style under a name, so the stage, the menu and export can all use it.
+export function registerStyle(name, spec) {
+  STYLES[name] = makeStyle(spec); STYLES[name].spec = spec;
+  if (!STYLE_ORDER.includes(name)) STYLE_ORDER.push(name);
+  return STYLES[name];
+}
+export function unregisterStyle(name) { if (!STYLES[name]?.custom) return; delete STYLES[name]; const i = STYLE_ORDER.indexOf(name); if (i >= 0) STYLE_ORDER.splice(i, 1); }
+
 const CAMS = {
   wide: { r: 17, phi: 70, y: 1.6, x: 0, z: 0 }, diagram: { r: 21, phi: 48, y: 0.4, x: 0, z: 0 },
 };
@@ -115,11 +153,24 @@ export class Stage {
   setStyle(name) {
     if (!STYLES[name]) return;
     this.styleName = name; this.style = STYLES[name];
-    this.matCache.clear();
+    this.matCache.clear(); this.outlineMat = null; this._applyPost();
     const lines = this.lines, tl0 = this.tl0; this._clearObjects(); this.lines = [];
     this._applyEnv(this.env || {});
     for (const l of lines) this.addLine(l, false);
     this.tl0 = tl0; // a new style keeps the story where it was
+  }
+  // Whole-frame looks: a colour filter, chunky pixels and a vignette. Export reads them from here too.
+  get post() { const st = this.style; return { filter: st.filter || '', pixel: st.pixel || 1, vignette: st.vignette || 0 }; }
+  _applyPost() {
+    const p = this.post, el = this.renderer.domElement;
+    this.container.style.filter = p.filter;
+    this.renderer.setPixelRatio((this.fixed ? 1 : Math.min(window.devicePixelRatio || 1, 2)) / p.pixel);
+    el.style.imageRendering = p.pixel > 1 ? 'pixelated' : '';
+    if (!this.fixed) {
+      if (!this.vig) { this.vig = document.createElement('div'); Object.assign(this.vig.style, { position: 'absolute', inset: '0', pointerEvents: 'none' }); this.container.appendChild(this.vig); }
+      this.vig.style.background = p.vignette ? `radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(0,0,0,${p.vignette}) 100%)` : 'none';
+    }
+    this._resize();
   }
   clear() { this._clearObjects(); this.lines = []; this.env = null; this._applyEnv({}); this.setMode(this.mode); }
   load(lines, pop = false) { this.clear(); lines.forEach((l, i) => this.addLine(l, pop, i * 45)); }
@@ -223,7 +274,7 @@ export class Stage {
     const top = color(sky[0], '#8ec5ff'), hor = color(sky[1], '#eaf4ff');
     this.skyCols = ['#' + top.getHexString(), '#' + hor.getHexString()];
     this.container.style.background = `linear-gradient(${this.skyCols[0]} 0%, ${this.skyCols[1]} 62%, ${this.skyCols[1]} 100%)`;
-    const fog = clamp(num(o.fog, 0.3), 0, 1);
+    const fog = clamp(st.fog ?? num(o.fog, 0.3), 0, 1);
     this.scene.fog = new THREE.Fog(hor, 26 - fog * 12, 78 - fog * 34);
     this.ground.material.color.copy(color(st.ground || o.ground, '#9fb59a'));
     this.ground.material.needsUpdate = true;
@@ -237,7 +288,7 @@ export class Stage {
       this.grid.position.y = 0.012; this.grid.material.transparent = true; this.grid.material.opacity = lines ? 0.55 : 0.28;
       this.scene.add(this.grid);
     }
-    const L = { day: [1.05, 2.3, '#ffffff', [8, 15, 7]], dusk: [0.7, 1.9, '#ffb07a', [-13, 5, 6]], night: [0.42, 0.9, '#9db8ff', [-6, 12, 4]], indoor: [1.0, 1.4, '#fff3e0', [3, 16, 8]] }[o.light] || [1.05, 2.3, '#ffffff', [8, 15, 7]];
+    const L = { day: [1.05, 2.3, '#ffffff', [8, 15, 7]], dusk: [0.7, 1.9, '#ffb07a', [-13, 5, 6]], night: [0.42, 0.9, '#9db8ff', [-6, 12, 4]], indoor: [1.0, 1.4, '#fff3e0', [3, 16, 8]] }[st.lightMode || o.light] || [1.05, 2.3, '#ffffff', [8, 15, 7]];
     this.hemiBase = L[0]; this.sunBase = L[1];
     this.hemi.intensity = L[0]; this.hemi.color.copy(top).lerp(new THREE.Color('#ffffff'), 0.6); this.hemi.groundColor.copy(this.ground.material.color).lerp(new THREE.Color('#444444'), 0.3);
     this.sun.intensity = L[1]; this.sun.color.copy(color(L[2])); this.sun.position.set(...L[3]);
@@ -274,8 +325,19 @@ export class Stage {
   }
   _tinted(hex, ghost) {
     const st = this.style; const c = color(ghost ? GHOST : hex);
-    if (!ghost && st.tint) c.lerp(new THREE.Color('#ffffff'), st.tint);
-    if (!ghost && st.sat) { const h = c.getHSL({}); c.setHSL(h.h, clamp(h.s + st.sat, 0, 1), clamp(h.l, 0.25, 0.8)); }
+    if (ghost) return c;
+    if (st.hue || st.sat || st.light) {
+      const h = c.getHSL({}), L = st.light || [0.25, 0.8];
+      c.setHSL((h.h + (st.hue || 0) / 360 + 1) % 1, clamp(h.s + (st.sat || 0), 0, 1), clamp(h.l, L[0], L[1]));
+    }
+    // Duotone maps brightness onto two inks; a palette pulls each colour toward the closest colour in it.
+    if (st.duotone) { const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; c.copy(color(st.duotone[0])).lerp(color(st.duotone[1]), clamp(Math.sqrt(l), 0, 1)); }
+    else if (st.palette) {
+      let best = null, bd = Infinity;
+      for (const p of st.palette) { const q = color(p), d = (q.r - c.r) ** 2 * 0.3 + (q.g - c.g) ** 2 * 0.59 + (q.b - c.b) ** 2 * 0.11; if (d < bd) { bd = d; best = q; } }
+      c.lerp(best, st.paletteK);
+    }
+    if (st.tint) c.lerp(color(st.tintColor || '#ffffff'), st.tint);
     return c;
   }
   // Lit reflections for metal and glass, made once per stage from a simple studio room.
@@ -283,13 +345,15 @@ export class Stage {
     if (!this.envTex) { const pm = new THREE.PMREMGenerator(this.renderer); this.envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose(); }
     return this.envTex;
   }
+  // A colour as the current style draws it, for light and effects. Only described styles recolour light, so the built-in looks stay as they were.
+  styleColor(hex) { return this.style.custom ? this._tinted(hex, false) : color(hex); }
   _mat(hex, ghost, finish = null) {
     const st = this.style; if (ghost) finish = null; const key = `${hex}|${ghost ? 1 : 0}|${finish || ''}`;
     if (this.matCache.has(key)) return this.matCache.get(key);
     const c = this._tinted(hex, ghost); let m;
     if (finish === 'glow') {
       // A glowing part is its own light: never shaded, always at least fairly bright.
-      const g = color(hex); const h = g.getHSL({}); g.setHSL(h.h, h.s, Math.max(h.l, 0.55));
+      const g = this.styleColor(hex); const h = g.getHSL({}); g.setHSL(h.h, h.s, Math.max(h.l, 0.55));
       m = new THREE.MeshBasicMaterial({ color: g, toneMapped: false });
     } else if (finish === 'metal' && st.shade !== 'lines' && st.shade !== 'toon') m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.3, metalness: 0.85, envMap: this._envMap(), envMapIntensity: 1, flatShading: st.shade === 'flat' });
     else if (finish === 'glass' && st.shade !== 'lines') {
@@ -297,7 +361,8 @@ export class Stage {
       Object.assign(m, { transparent: true, opacity: 0.4, depthWrite: false });
     } else if (st.shade === 'lines') m = new THREE.MeshBasicMaterial({ color: color(st.fill), transparent: st.fillOpacity < 1 || ghost, opacity: ghost ? st.fillOpacity * 0.35 : st.fillOpacity, depthWrite: st.fillOpacity >= 1 && !ghost });
     else if (st.shade === 'toon') m = new THREE.MeshToonMaterial({ color: c, gradientMap: this.toonMap });
-    else m = new THREE.MeshStandardMaterial({ color: c, roughness: st.rough ?? 0.8, metalness: 0, flatShading: st.shade === 'flat' });
+    else m = new THREE.MeshStandardMaterial({ color: c, roughness: st.rough ?? 0.8, metalness: st.metal ?? 0, flatShading: st.shade === 'flat', ...(st.metal > 0.3 ? { envMap: this._envMap() } : {}) });
+    if (st.emissive && m.emissive) m.emissive.copy(c).multiplyScalar(st.emissive);
     if (ghost && st.shade !== 'lines') { m.transparent = true; m.opacity = 0.42; m.depthWrite = false; }
     this.matCache.set(key, m); return m;
   }
@@ -352,9 +417,9 @@ export class Stage {
       mesh.scale.set(w, shape === 'torus' ? h / 0.24 : h, d);
       if (st.shade === 'lines') mesh.add(new THREE.LineSegments(this._edges(shape), this._lineMat(hex, ghost)));
       if (st.outline && !ghost && finish !== 'glow') {
-        if (!this.outlineMat) this.outlineMat = new THREE.MeshBasicMaterial({ color: 0x1b1626, side: THREE.BackSide });
+        if (!this.outlineMat) this.outlineMat = new THREE.MeshBasicMaterial({ color: color(st.outlineColor || '#1b1626'), side: THREE.BackSide });
         const o = new THREE.Mesh(this._geo(shape), this.outlineMat);
-        const t = 0.05; o.scale.set(1 + t / Math.max(w, 0.15), 1 + t / Math.max(h, 0.15), 1 + t / Math.max(d, 0.15));
+        const t = st.outlineW ?? 0.05; o.scale.set(1 + t / Math.max(w, 0.15), 1 + t / Math.max(h, 0.15), 1 + t / Math.max(d, 0.15));
         mesh.add(o);
       }
     }
@@ -372,10 +437,10 @@ export class Stage {
       // A glowing part gets a soft halo of its own light around it.
       if (m.userData.glow) {
         const key = `H|${m.userData.glow.hex}`;
-        if (!this.matCache.has(key)) this.matCache.set(key, glowBlend(new THREE.SpriteMaterial({ map: fxTexture('halo'), color: color(m.userData.glow.hex) }), 0.55));
+        if (!this.matCache.has(key)) this.matCache.set(key, glowBlend(new THREE.SpriteMaterial({ map: fxTexture('halo'), color: this.styleColor(m.userData.glow.hex) }), 0.55));
         const sp = new THREE.Sprite(this.matCache.get(key)); sp.userData.halo = true; sp.raycast = () => {};
         sp.position.copy(m.position); sp.scale.setScalar(clamp(m.userData.glow.size * 2.4, 0.3, 10)); g.add(sp);
-        if (!g.userData.glow) g.userData.glow = { c: color(m.userData.glow.hex), y: m.position.y };
+        if (!g.userData.glow) g.userData.glow = { c: this.styleColor(m.userData.glow.hex), y: m.position.y };
       }
     }
     return g;
