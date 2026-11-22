@@ -375,3 +375,12 @@ dialog::backdrop { background: rgba(5, 6, 10, .6); backdrop-filter: blur(3px); }
 /* Things in the scene: click to outline it on the stage, x to remove it */
 .chip.thing { cursor: pointer; }
 .chip.thing:hover, .chip.thing.on { background: var(--raise); outline: 1px solid var(--accent); }
+
+/* Things and Motion fold to one line so the preview keeps its room; open, they wrap up to about three lines and scroll */
+.insp-row.fold .chips { flex-wrap: nowrap; overflow: hidden; }
+.insp-row.fold .chips > * { flex: none; }
+.insp-row.fold .chips.over { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+.insp-row.fold.open { align-items: flex-start; }
+.insp-row.fold.open > span, .insp-row.fold.open > .mini { margin-top: 3px; }
+.insp-row.fold.open .chips { flex-wrap: wrap; max-height: 88px; overflow-y: auto; -webkit-mask-image: none; mask-image: none; }
+.insp-row .fold-btn { white-space: nowrap; font-variant-numeric: tabular-nums; }

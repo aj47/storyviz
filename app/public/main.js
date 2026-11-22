@@ -729,6 +729,7 @@ function renderInspector() {
     : `<span class="chip"><b>${Number(l.step) || 1}</b>${esc(motionWords(l))}` + (l.t === 'obj' ? '' : `<button data-key="${esc(actKey(l))}" title="Remove this motion">×</button>`) + '</span>')).join('')
     + (texty > 1 ? '<button class="link" data-notext title="Take every label and counting number out of this scene">Remove all text</button>' : ''))
     || `<span class="none">${busy ? 'Motion is on its way.' : sc ? 'Nothing moves yet.' : ''}</span>`;
+  fitFold('motion');
 }
 $('#capInput').addEventListener('change', () => setCaption(S.cur, $('#capInput').value));
 $('#capInput').addEventListener('input', () => { const sc = sceneNow(); if (sc && S.shown === sc) placeCaption($('#capInput').value); });
@@ -1849,6 +1850,24 @@ $('#notesView').addEventListener('click', (e) => {
   else if ((t = d('lead'))) researchNote(t.lead);
 });
 
+// ---------- folding chip rows ----------
+// Things and Motion show one line of chips; the rest are a click away, so the preview keeps its height.
+const foldOpen = (name) => store.get('fold.' + name) === '1';
+function setFold(name, open) { store.set('fold.' + name, open ? '1' : '0'); $(`#${name}Row`).classList.toggle('open', open); fitFold(name); }
+function fitFold(name) {
+  const row = $(`#${name}Row`), box = $('#' + name), btn = row.querySelector('.fold-btn'), open = foldOpen(name);
+  row.classList.toggle('open', open);
+  requestAnimationFrame(() => {
+    const chips = [...box.querySelectorAll('.chip')];
+    const hidden = open ? 0 : chips.filter((c) => c.offsetLeft + c.offsetWidth > box.clientWidth + 1).length;
+    box.classList.toggle('over', hidden > 0);
+    btn.hidden = !open && hidden === 0; btn.textContent = open ? 'Less' : `+${hidden} more`;
+    btn.title = open ? 'Show one line' : `Show all ${chips.length}`;
+  });
+}
+for (const name of ['things', 'motion']) $(`#${name}Row .fold-btn`).addEventListener('click', () => setFold(name, !foldOpen(name)));
+new ResizeObserver(() => { fitFold('things'); fitFold('motion'); }).observe($('#insp'));
+
 // ---------- things in the scene ----------
 // Every object in the scene, by name, with an x to take it out at once. Clicking a thing on the stage picks its
 // chip. What the writer removes is remembered, so later passes never draw it again.
@@ -1862,6 +1881,11 @@ function renderThings() {
   $('#thingsRow').hidden = S.pack?.visual === 'diagram';
   $('#things').innerHTML = objs.map((l) => `<span class="chip thing ${S.picked === String(l.id) ? 'on' : ''}" data-id="${esc(l.id)}">${esc(thingName(l.id))}<button data-drop="${esc(l.id)}" title="Remove ${esc(thingName(l.id))} from this scene">×</button></span>`).join('')
     || `<span class="none">${sc ? 'Nothing drawn yet.' : ''}</span>`;
+  fitFold('things');
+  // A thing picked on the stage is shown in the list, opening it if the chip is out of sight.
+  const on = $('#things .thing.on');
+  if (on && !foldOpen('things') && on.offsetLeft + on.offsetWidth > $('#things').clientWidth) setFold('things', true);
+  on?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 function removeThing(sc, id) {
   const name = thingName(id), o = sc.lines.find((l) => l.t === 'obj' && String(l.id) === String(id));

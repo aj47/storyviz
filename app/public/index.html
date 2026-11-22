@@ -88,8 +88,8 @@
         <div class="insp-row" id="lenRow"><span>Length</span><input id="lenInput" class="field num" type="number" min="1" max="30" step="0.5" title="Seconds this scene stays on screen"><small class="unit">s</small>
           <button class="mini" id="lenAuto" title="Go back to the length worked out from the words">Auto</button><small class="hint" id="lenHint"></small></div>
         <form class="insp-row" id="dirForm"><span>Direction</span><input id="dirInput" class="field" maxlength="300" spellcheck="false" placeholder="What to show and how it moves, e.g. cut to the cooling towers misting water"><button class="mini" id="dirBtn">Send</button></form>
-        <div class="insp-row" id="thingsRow"><span>Things</span><div class="chips" id="things"></div></div>
-        <div class="insp-row" id="motionRow"><span>Motion</span><div class="chips" id="motion"></div><button class="mini" id="animateBtn" title="Ask the illustrator to choreograph this scene again">Re-animate</button></div>
+        <div class="insp-row fold" id="thingsRow"><span>Things</span><div class="chips" id="things"></div><button class="mini fold-btn" data-more="things" hidden></button></div>
+        <div class="insp-row fold" id="motionRow"><span>Motion</span><div class="chips" id="motion"></div><button class="mini fold-btn" data-more="motion" hidden></button><button class="mini" id="animateBtn" title="Ask the illustrator to choreograph this scene again">Re-animate</button></div>
       </div>
     </div>
   </section>
