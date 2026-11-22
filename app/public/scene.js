@@ -61,10 +61,12 @@ function toonGradient() {
 }
 
 export class Stage {
-  constructor(container, hooks = {}) {
-    this.container = container; this.hooks = hooks;
+  // opts.size = [w, h] makes an offscreen stage for export: a fixed size in pixels, no mouse, and no clock of
+  // its own. Its owner moves time forward with renderAt(ms), so a frame is the same however long it takes to draw.
+  constructor(container, hooks = {}, opts = {}) {
+    this.container = container; this.hooks = hooks; this.fixed = opts.size || null; this.vnow = null;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(this.fixed ? 1 : Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true; this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
     this.scene = new THREE.Scene();
@@ -87,12 +89,14 @@ export class Stage {
     this.cam = { ...CAMS.wide }; this.camT = { ...CAMS.wide }; this.userTheta = 0; this.userPhi = 0; this.zoom = 1; this.lastTouch = 0;
     this._resetState();
     this._applyEnv({});
+    this.lenSec = 0; this.playing = false; this.lastNow = null;
+    if (this.fixed) { this._resize(); return; }
     this._bindPointer();
     new ResizeObserver(() => this._resize()).observe(container);
     this._resize();
-    this.clock = new THREE.Clock();
     this.renderer.setAnimationLoop(() => this._frame());
   }
+  _now() { return this.vnow ?? performance.now(); }
 
   // ---------- public ----------
   setMode(mode) { this.mode = mode; this.shotCam = null; this.camT = { ...(mode === 'diagram' ? CAMS.diagram : CAMS.wide) }; }
@@ -108,6 +112,20 @@ export class Stage {
   clear() { this._clearObjects(); this.lines = []; this.env = null; this._applyEnv({}); this.setMode(this.mode); }
   load(lines, pop = false) { this.clear(); lines.forEach((l, i) => this.addLine(l, pop, i * 45)); }
   get objectCount() { return this.count; }
+  // How long the scene lasts on screen, in seconds. The story's steps are spread over it, and the preview loops at
+  // that length, so trimming a scene shows straight away what fits. 0 goes back to the pace the illustrator set.
+  setLength(sec) { const v = clamp(num(sec), 0, 60); if (v !== this.lenSec) { this.lenSec = v; this.tl0 = this._now(); } }
+  restart() { this.tl0 = this._now(); }
+  // The sky is painted behind the canvas, so an exported frame needs its colours.
+  get sky() { return this.skyCols || ['#8ec5ff', '#eaf4ff']; }
+  // Export: build a scene with everything already in place (stepped things still enter on cue), play it once
+  // from the start without the wind-back at the end of a loop, and render the frame at a given time.
+  loadForExport(lines, sec) {
+    this.vnow = 0; this.playing = true; this.clear(); this.lenSec = clamp(num(sec), 0.5, 60);
+    lines.forEach((l) => this.addLine(l, false));
+    this.tl0 = 0; this.cam = { ...this.camT }; this.lastNow = null;
+  }
+  renderAt(ms) { this.vnow = ms; this._frame(); return this.renderer.domElement; }
 
   // Apply a line from an improvement pass: an obj with a known id replaces that object where it
   // stands, a new env replaces the old one, and anything else is added.
@@ -171,7 +189,7 @@ export class Stage {
   // ---------- internals ----------
   _resetState() {
     this.defs = new Map(); this.groups = new Map(); this.copies = new Map(); this.nodes = new Map(); this.pendingEdges = [];
-    this.actors = []; this.acts = []; this.counts = []; this.texts = []; this.maxStep = 0; this.tl0 = performance.now(); this.shotSec = 0; this.lookNow = undefined;
+    this.actors = []; this.acts = []; this.counts = []; this.texts = []; this.maxStep = 0; this.tl0 = this._now(); this.shotSec = 0; this.lookNow = undefined;
     this.pulses = []; this.disposables = []; this.count = 0;
     this.focusBox = new THREE.Box3(); this.focusN = 0; this.shotCam = null;
     this.diagramTarget = new THREE.Vector3();
@@ -187,7 +205,8 @@ export class Stage {
     const st = this.style;
     const sky = st.sky || (Array.isArray(o.sky) && o.sky.length >= 2 ? o.sky : ['#8ec5ff', '#eaf4ff']);
     const top = color(sky[0], '#8ec5ff'), hor = color(sky[1], '#eaf4ff');
-    this.container.style.background = `linear-gradient(#${top.getHexString()} 0%, #${hor.getHexString()} 62%, #${hor.getHexString()} 100%)`;
+    this.skyCols = ['#' + top.getHexString(), '#' + hor.getHexString()];
+    this.container.style.background = `linear-gradient(${this.skyCols[0]} 0%, ${this.skyCols[1]} 62%, ${this.skyCols[1]} 100%)`;
     const fog = clamp(num(o.fog, 0.3), 0, 1);
     this.scene.fog = new THREE.Fog(hor, 26 - fog * 12, 78 - fog * 34);
     this.ground.material.color.copy(color(st.ground || o.ground, '#9fb59a'));
@@ -312,7 +331,7 @@ export class Stage {
     g.userData = { x: g.position.x, z: g.position.z, ry: g.rotation.y, s: sc };
     // An actor is a thing on stage and everything that moves it: how it comes in, the step of the story it
     // comes in at, and its idle loop. Its place each frame is worked out from the story clock in _animate.
-    const a = { g, anim: anim && anim !== 'none' ? anim : null, ph: Math.random() * 6.28, born: pop ? performance.now() + delay : -1e9,
+    const a = { g, anim: anim && anim !== 'none' ? anim : null, ph: Math.random() * 6.28, born: pop ? this._now() + delay : -1e9,
       step: clamp(Math.round(num(o.step)), 0, 8), enter: ENTERS.includes(o.in) ? o.in : 'pop' };
     g.userData.actor = a; this.actors.push(a); this._step(a.step, pop);
     g.scale.setScalar(pop || a.step ? 0.0001 : sc);
@@ -356,10 +375,14 @@ export class Stage {
   // ---------- motion ----------
   // The story runs on a clock of steps. Step 0 is what is there from the start; things and motions with a
   // later step wait their turn, so the picture unfolds in the order the paragraph tells it, then loops.
-  _step(step, live) { if (step > this.maxStep) this.maxStep = step; if (live && step) this.tl0 = performance.now(); }
+  _step(step, live) { if (step > this.maxStep) this.maxStep = step; if (live && step && !this.playing) this.tl0 = this._now(); }
   _clock(now) {
     if (!this.maxStep) return { tt: 0, rw: 0, D: 1.8 };
-    const D = this.shotSec ? clamp(this.shotSec / (this.maxStep + 1), 1.3, 3) : 1.8, total = (this.maxStep + 1) * D + 2.2;
+    let D, total;
+    // With a set length the steps share it, leaving a beat at the end for the last one to land.
+    if (this.lenSec) { total = this.lenSec; D = clamp((total - 1.1) / (this.maxStep + 1), 0.3, 6); }
+    else { D = this.shotSec ? clamp(this.shotSec / (this.maxStep + 1), 1.3, 3) : 1.8; total = (this.maxStep + 1) * D + 2.2; }
+    if (this.playing) return { tt: (now - this.tl0) / 1000, D, rw: 0 };
     const tt = ((now - this.tl0) / 1000) % total;
     // The last moments of a loop wind everything back, so the restart is a motion too and not a cut.
     return { tt, D, rw: easeInOut(clamp((tt - (total - 0.8)) / 0.7, 0, 1)) };
@@ -629,19 +652,22 @@ export class Stage {
   }
 
   _resize() {
-    const w = this.container.clientWidth || 1, h = this.container.clientHeight || 1;
+    const [w, h] = this.fixed || [this.container.clientWidth || 1, this.container.clientHeight || 1];
     this.renderer.setSize(w, h, false); this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     Object.assign(this.renderer.domElement.style, { width: '100%', height: '100%', display: 'block' });
   }
 
   _frame() {
-    const t = this.clock.getElapsedTime(), now = performance.now();
-    for (const k of ['r', 'phi', 'y', 'x', 'z']) this.cam[k] += ((this.camT[k] ?? 0) - this.cam[k]) * 0.07;
+    const now = this._now(), t = now / 1000;
+    // Easing by elapsed time, not by frame, so the camera moves the same at 30 frames a second as at 120.
+    const dt = clamp(this.lastNow == null ? 1 / 60 : (now - this.lastNow) / 1000, 0, 0.25); this.lastNow = now;
+    const ease = (k) => 1 - Math.pow(1 - k, dt * 60);
+    for (const k of ['r', 'phi', 'y', 'x', 'z']) this.cam[k] += ((this.camT[k] ?? 0) - this.cam[k]) * ease(0.07);
     const sway = Math.sin(t * 0.24) * 0.36;
     const theta = sway + this.userTheta; const phi = clamp(this.cam.phi + this.userPhi, 8, 88) * D2R; const r = this.cam.r * this.zoom;
     this.camera.position.set(this.cam.x + r * Math.sin(phi) * Math.sin(theta), this.cam.y + r * Math.cos(phi), this.cam.z + r * Math.sin(phi) * Math.cos(theta));
     this.camera.lookAt(this.cam.x, this.cam.y, this.cam.z);
-    this.diagram.position.lerp(this.diagramTarget, 0.08);
+    this.diagram.position.lerp(this.diagramTarget, ease(0.08));
     this._animate(t, now);
     this._layoutTexts();
     for (const p of this.pulses) p.pulse.position.copy(p.curve.getPoint((t * 0.45 + p.ph) % 1));

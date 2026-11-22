@@ -147,18 +147,46 @@ main { height: calc(100% - 48px); display: grid; grid-template-columns: minmax(3
 .tools .sw { color: #c7cde0; }
 #styleBtn { color: #fff; font-weight: 650; }
 #styleBtn::after { content: ' ▴'; font-size: 10px; opacity: .7; }
-.pages { display: flex; gap: 5px; flex-wrap: wrap; }
-.pages button { min-width: 28px; height: 28px; padding: 0 8px; border-radius: 8px; background: var(--raise2); color: #8f97ad; font-weight: 650; font-size: 12px; }
-.pages button.ready { color: #fff; }
+/* Timeline: one block per scene, its width its length. The right edge of a drawn scene is a trim handle. */
+.timeline-row { display: flex; align-items: center; gap: 8px; }
+.timeline-row .play { flex: none; height: 30px; padding: 0 10px; }
+.timeline-row .play.on { color: var(--accent); }
+.timeline-row .total { flex: none; color: var(--muted); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.timeline-row .solid { flex: none; font-size: 12.5px; padding: 6px 12px; }
+.timeline-row .solid:disabled { opacity: .4; cursor: default; }
+.pages { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; padding: 1px 0; }
+.pages button { position: relative; flex: none; height: 30px; padding: 0 12px 0 8px; border-radius: 7px; background: var(--raise2); color: #8f97ad;
+  display: flex; align-items: center; gap: 6px; overflow: hidden; font-size: 12px; text-align: left; }
+.pages button b { font-weight: 700; }
+.pages button small { font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pages button.ready { color: #fff; background: #2a3040; }
+.pages button.set small { opacity: 1; color: var(--accent); }
 .pages button.busy { animation: busy 1.1s ease-in-out infinite; }
 .pages button.on { background: var(--accent); color: #1a1205; }
-.pages .total { align-self: center; color: var(--muted); font-size: 12.5px; font-weight: 600; margin-left: 6px; }
+.pages button.on.set small { color: #1a1205; }
+.pages button.playing { box-shadow: inset 0 -3px 0 var(--good); }
+.pages .trim { position: absolute; top: 0; right: 0; bottom: 0; width: 9px; cursor: ew-resize; border-left: 1px solid rgba(255,255,255,.12); }
+.pages .trim::after { content: ''; position: absolute; top: 9px; bottom: 9px; left: 3px; width: 2px; border-radius: 1px; background: currentColor; opacity: .45; }
+.pages button:hover .trim::after, .pages button.trimming .trim::after { opacity: 1; }
+.pages button.trimming { outline: 1.5px solid var(--accent); }
+.insp-row .field.num { flex: none; width: 74px; }
+.insp-row .unit { color: var(--muted); margin-left: -4px; }
+.insp-row .hint { color: var(--muted); font-size: 11.5px; }
+.cap-size { flex: none; display: flex; align-items: center; gap: 6px; }
+.cap-size small { color: var(--muted); font-size: 12px; }
+.cap-size input { width: 90px; accent-color: var(--accent); }
 @keyframes busy { 50% { box-shadow: inset 0 0 0 1.5px var(--warn); } }
 
-.phone { position: absolute; top: 0; bottom: 0; left: 50%; aspect-ratio: 9 / 16; transform: translateX(-50%); pointer-events: none;
+.phone { position: absolute; top: 0; bottom: 0; left: 50%; aspect-ratio: 9 / 16; transform: translateX(-50%); pointer-events: none; container-type: size;
   box-shadow: 0 0 0 4000px rgba(5, 6, 10, .62); border-left: 2px solid rgba(255, 255, 255, .5); border-right: 2px solid rgba(255, 255, 255, .5); }
-.phone-caption { position: absolute; left: 7%; right: 7%; bottom: 23%; text-align: center; font-size: clamp(20px, 2.6vw, 34px); font-weight: 850; line-height: 1.12;
-  color: #fff; text-shadow: 0 0 0 #000, 0 3px 0 #000, 0 0 18px rgba(0, 0, 0, .8); -webkit-text-stroke: 1.2px #000; paint-order: stroke fill; }
+/* Placed by its middle, as shares of the frame, and sized against the frame's width, so the export matches. */
+.phone-caption { position: absolute; left: 50%; top: 72%; transform: translate(-50%, -50%); width: max-content; max-width: 86%; text-align: center;
+  font-size: calc(var(--cs, .085) * 100cqw); font-weight: 800; line-height: 1.12; pointer-events: auto; cursor: move; user-select: none; touch-action: none;
+  padding: .08em .15em; border-radius: 6px; outline: 1.5px dashed transparent; outline-offset: 2px;
+  color: #fff; text-shadow: 0 0 0 #000, 0 .09em 0 #000, 0 0 .5em rgba(0, 0, 0, .8); -webkit-text-stroke: .035em #000; paint-order: stroke fill; }
+.phone-caption:hover, .phone-caption.dragging { outline-color: rgba(255, 255, 255, .55); }
+.cap-handle { position: absolute; right: -7px; bottom: -7px; width: 12px; height: 12px; border-radius: 3px; background: #fff; box-shadow: 0 0 0 1.5px #000; cursor: nwse-resize; opacity: 0; }
+.phone-caption:hover .cap-handle, .phone-caption.dragging .cap-handle { opacity: 1; }
 
 /* ---------- coach ---------- */
 .coach { overflow-y: auto; padding: 16px 18px 40px; }
@@ -291,3 +319,15 @@ dialog::backdrop { background: rgba(5, 6, 10, .6); backdrop-filter: blur(3px); }
   .autos { grid-template-columns: 1fr; }
   .bottom { flex-direction: column; align-items: flex-start; }
 }
+
+/* ---------- export ---------- */
+#exportDlg { width: min(600px, 94vw); }
+.export-opts { display: flex; gap: 14px; margin: 10px 0 12px; }
+.export-opts label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.export-opts .field { width: auto; padding: 6px 9px; }
+.export-view { display: flex; justify-content: center; padding: 12px; background: var(--bg); border-radius: 12px; }
+.export-view canvas { max-width: 100%; max-height: 46vh; border-radius: 6px; background: #000; }
+.export-bar { height: 6px; margin-top: 12px; border-radius: 3px; background: var(--raise2); overflow: hidden; }
+.export-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.export-acts { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; }
+.export-acts a.solid { text-decoration: none; font-size: 13px; }

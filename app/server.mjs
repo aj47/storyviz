@@ -16,6 +16,8 @@ const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ||
 
 // three.js is served from node_modules, whether it was installed in app/ or at the repository root.
 const THREE_DIR = [path.join(ROOT, 'node_modules/three'), path.join(ROOT, '..', 'node_modules/three')].find((d) => fs.existsSync(d)) || path.join(ROOT, 'node_modules/three');
+// The video encoder for Export runs in the browser; its single-file build is served as it is.
+const MEDIABUNNY = [path.join(ROOT, 'node_modules/mediabunny'), path.join(ROOT, '..', 'node_modules/mediabunny')].find((d) => fs.existsSync(d)) || path.join(ROOT, 'node_modules/mediabunny');
 
 const CACHE = path.join(ROOT, '..', 'cache');
 fs.mkdirSync(CACHE, { recursive: true });
@@ -557,6 +559,7 @@ const server = http.createServer(async (req, res) => {
       return streamFills(res, pack, b.text || '', blanks);
     }
     if (req.method === 'GET') {
+      if (url.pathname === '/vendor/mediabunny.mjs') return sendFile(res, path.join(MEDIABUNNY, 'dist/bundles/mediabunny.min.mjs'));
       if (url.pathname.startsWith('/vendor/three/')) {
         const f = safeJoin(THREE_DIR, url.pathname.slice('/vendor/three/'.length));
         if (f) return sendFile(res, f);

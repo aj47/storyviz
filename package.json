@@ -5,12 +5,15 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node app/server.mjs",
     "prime": "node app/prime.mjs"
   },
   "dependencies": {
+    "mediabunny": "^1.66.2",
     "three": "^0.170.0"
   }
 }

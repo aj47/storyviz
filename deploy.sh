@@ -5,6 +5,8 @@ cd "$(dirname "$0")"
 SSH="ssh -i $HOME/.ssh/exe_dev_techfren -o IdentitiesOnly=yes -o BatchMode=yes"
 rsync -az --delete --exclude node_modules --exclude package.json --exclude package-lock.json -e "$SSH" app/ exedev@storyviz.exe.xyz:storyviz/app/
 $SSH exedev@storyviz.exe.xyz 'set -e
+# The page dependencies live next to the app: three.js for the stage, mediabunny for video export.
+[ -d ~/storyviz/app/node_modules/mediabunny ] || (cd ~/storyviz/app && npm install --no-save --no-package-lock --silent mediabunny@^1.66.2 >/dev/null)
 cp ~/storyviz/app/agents/illustrator.AGENTS.md ~/storyviz/agents/illustrator/AGENTS.md
 cp ~/storyviz/app/agents/coach.AGENTS.md ~/storyviz/agents/coach/AGENTS.md
 if [ ! -f /etc/systemd/system/storyviz.service ]; then
@@ -27,4 +29,5 @@ fi
 sudo systemctl restart storyviz; sleep 1; systemctl is-active storyviz
 curl -s -o /dev/null -w "index %{http_code}\n" http://127.0.0.1:8000/
 curl -s http://127.0.0.1:8000/api/packs | python3 -c "import json,sys; print([(p[\"id\"],len(p[\"rules\"])) for p in json.load(sys.stdin)])"
-curl -s -o /dev/null -w "three %{http_code}\n" http://127.0.0.1:8000/vendor/three/build/three.module.js'
+curl -s -o /dev/null -w "three %{http_code}\n" http://127.0.0.1:8000/vendor/three/build/three.module.js
+curl -s -o /dev/null -w "mediabunny %{http_code}\n" http://127.0.0.1:8000/vendor/mediabunny.mjs'

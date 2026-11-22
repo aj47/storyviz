@@ -5,10 +5,18 @@ Write a story or a script on the left and each paragraph becomes an animated 3D 
 
 Built for the Cerebras x Kimi K3.1 Pro hackathon. The scenes are drawn by the model as a stream of small JSON lines (shapes, characters, motion, camera) that the page renders with three.js as they arrive, which is why a fast model matters.
 
+## Timeline and export
+
+Under the stage, the timeline shows one block per scene, as wide as the scene is long. Drag a block's right edge to trim or stretch it, or type a length under Length; Auto goes back to the length from the shot plan or the words. Play (or Space) runs every drawn scene in order for its length.
+
+In short video scripts, the on-screen text can be dragged anywhere in the 9:16 frame and resized by its corner, by scrolling over it, or with the Size slider. Double-click it to put it back.
+
+Export video renders every drawn scene, for its length and in the current style, into one MP4 at 1080p or 720p and 30 or 60 fps. It runs in the browser with WebCodecs, so it needs a recent Chrome, Edge or Safari. Scenes that are not drawn yet are left out, and the dialog says which.
+
 ## What is in here
 
 - `app/server.mjs`: the whole server, plain Node with no framework. It serves the page, queues model requests, caches responses, saves projects and keeps their history in git.
-- `app/public/`: the page. `main.js` is the editor, the agent panel and history; `scene.js` is the 3D renderer.
+- `app/public/`: the page. `main.js` is the editor, the timeline, the agent panel and history; `scene.js` is the 3D renderer; `export.js` renders the scenes to MP4.
 - `app/agents/`: the instructions for the two agents, `illustrator` (draws scenes) and `coach` (tips, fact checks, edits).
 - `app/packs/`: one guide pack per kind of writing (children's story, short story, short video script, engineering docs). A pack holds the rules the coach checks against, with their sources, and a sample text.
 - `app/prime.mjs`: warms the response cache with each pack's sample.
@@ -18,7 +26,7 @@ Built for the Cerebras x Kimi K3.1 Pro hackathon. The scenes are drawn by the mo
 
 You need Node 22 or newer, git, and an OpenClaw gateway on the same machine. All model calls go through the gateway's OpenAI-compatible chat completions endpoint.
 
-1. Install the one dependency (three.js):
+1. Install the two dependencies (three.js for the stage, mediabunny for video export):
 
    ```
    npm install

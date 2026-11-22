@@ -1,4 +1,5 @@
 import { Stage, STYLES, STYLE_ORDER, actKey } from './scene.js';
+import { exportVideo, CAPTION } from './export.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -104,7 +105,7 @@ function loadProject(p) {
   S.scenes.clear();
   for (const s of p.scenes || []) {
     const raw = (s.raw || []).filter((r) => parseLine(r)), lines = raw.map(parseLine); if (!lines.length) continue;
-    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', caption: s.cap || undefined, motionTried: Boolean(s.mo), status: 'done', shot: lines.filter((o) => o.t === 'shot').pop() || null });
+    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', caption: s.cap || undefined, motionTried: Boolean(s.mo), status: 'done', ...layoutIn(s), shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
   S.coach.dismissed = new Set(Array.isArray(p.dismissed) ? p.dismissed : []);
@@ -158,7 +159,7 @@ function snapshot(p) {
       for (const x of S.scenes.values()) if (x.pack === S.pack.id && x.idx === i && x.status === 'done' && x.raw.length && (!sc || x.seq > sc.seq)) sc = x;
     }
     const key = sc?.key.replace(/\|old$/, '');
-    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', cap: sc.caption || '', mo: sc.motionTried ? 1 : 0 });
+    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', cap: sc.caption || '', mo: sc.motionTried ? 1 : 0, ...layoutOut(sc) });
   });
   p.dismissed = [...S.coach.dismissed].slice(-200);
   p.scenes = [...kept.values()];
@@ -253,7 +254,8 @@ function buildMenus() {
 }
 document.addEventListener('click', closeMenus);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeMenus();
+  if (e.key === 'Escape') { closeMenus(); stopPlay(); }
+  if (e.key === ' ' && !e.target.closest?.('input, textarea, select, button, [contenteditable]') && !$('dialog[open]')) { e.preventDefault(); togglePlay(); }
   if (!(e.metaKey || e.ctrlKey)) return;
   if (e.key === 's') { e.preventDefault(); dirty = true; saveNow(); }
   else if (e.key === 'o') { e.preventDefault(); showProjects(false); }
@@ -352,7 +354,7 @@ function onText(immediate = false, changed = true) {
 }
 function moved(force = false) { if (syncCurrent() || force) { renderBackdrop(); renderPages(); showCurrent(); } }
 let lastEdit = -1e9;
-ta.addEventListener('input', () => { lastEdit = performance.now(); onText(); });
+ta.addEventListener('input', () => { lastEdit = performance.now(); stopPlay(); onText(); });
 ta.addEventListener('scroll', () => { $('#backdrop').scrollTop = ta.scrollTop; });
 for (const ev of ['keyup', 'click', 'focus']) ta.addEventListener(ev, () => moved());
 // A click inside a blank selects all of it, so typing replaces it, and brings up its suggestions.
@@ -512,7 +514,7 @@ function applyLine(sc, o) {
   if (shown) stage.upsert(o, true); else if (sceneFor(S.cur) === sc) showCurrent();
 }
 
-async function startScene(idx, text, key, { fresh = false, guide, from = null, caption } = {}) {
+async function startScene(idx, text, key, { fresh = false, guide, from = null, caption, keep = null } = {}) {
   const sc = { key, idx, pack: S.pack.id, seq: ++S.seq, text, lines: [], raw: [], status: 'wait', t0: performance.now(), waitMs: 0, genStart: 0, chars: 0, ctrl: new AbortController(), shot: null };
   // An edit keeps the drawing it had: the scene starts as a copy and Kimi sends only what changes.
   const base = from || (fresh ? null : earlierVersion(text, new Set(S.paras.map((p) => keyOf(p.text)))));
@@ -520,6 +522,8 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null, c
   sc.guide = guide ?? base?.guide ?? ''; sc.updating = Boolean(base);
   // So does the on-screen text the writer set by hand.
   sc.caption = caption ?? base?.caption;
+  // And so do its length and where its words sit on screen.
+  Object.assign(sc, layoutIn(layoutOut(keep || base || {})));
   if (base) {
     Object.assign(sc, { lines: base.lines.slice(), raw: base.raw.slice(), shot: base.shot, round: Math.min(base.round || 0, PLAN.length - 1), motionTried: base.motionTried });
     stopImproving(base);
@@ -565,7 +569,7 @@ function redraw() {
   if (old?.status === 'cancelled' && !old.lines.length) old = null;
   stopImproving(old);
   if (old) { S.scenes.delete(key); if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); } }
-  startScene(S.cur, p.text, key, { fresh: true, guide: old?.guide, caption: old?.caption }); renderPages();
+  startScene(S.cur, p.text, key, { fresh: true, guide: old?.guide, caption: old?.caption, keep: old }); renderPages();
 }
 
 // ---------- guide ----------
@@ -583,7 +587,7 @@ function guideScene(idx, guide, caption) {
     stopImproving(old); S.scenes.delete(key);
     if (old.lines.length) { old.key = key + '|old'; S.scenes.set(old.key, old); from = old; }
   }
-  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from, caption: caption ?? old?.caption }); renderPages();
+  startScene(idx, p.text, key, { guide: guide.trim().slice(0, 300), from, caption: caption ?? old?.caption, keep: old }); renderPages();
 }
 
 // ---------- scene inspector ----------
@@ -614,12 +618,14 @@ let inspSig = '';
 function renderInspector() {
   const sc = sceneNow(), mode = S.pack?.visual, drawable = (S.paras[S.cur]?.text.length || 0) >= 12;
   $('#capRow').hidden = mode !== 'storyboard'; $('#motionRow').hidden = mode === 'diagram';
+  renderLength(sc);
   const cap = $('#capInput'), dir = $('#dirInput');
   cap.disabled = !sc; dir.disabled = !drawable; $('#dirBtn').disabled = !drawable;
   $('#animateBtn').disabled = !sc || sc.status !== 'done' || Boolean(sc.wantMotion) || Boolean(sc.imps);
   const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || l.t === 'label' || (l.t === 'obj' && l.step)) : [];
-  const sig = [S.cur, sc?.key, sc?.caption, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : l.t === 'label' ? 'L' + l.text : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
+  const sig = [S.cur, sc?.key, sc?.caption, sc?.capSize, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : l.t === 'label' ? 'L' + l.text : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
   if (sig === inspSig) return; inspSig = sig;
+  $('#capSize').value = ((sc?.capSize ?? CAPTION.size) * 100).toFixed(1); $('#capSize').disabled = $('#capReset').disabled = !sc;
   if (document.activeElement !== cap) { cap.value = captionOf(sc); cap.placeholder = sc?.idx === 0 ? 'The text hook shown on screen' : 'None. Type here to put words on screen in this scene'; }
   if (document.activeElement !== dir) dir.value = sc?.guide || '';
   const busy = sc?.wantMotion || sc?.imps?.some((i) => i.focus === 'motion');
@@ -631,7 +637,7 @@ function renderInspector() {
     || `<span class="none">${busy ? 'Motion is on its way.' : sc ? 'Nothing moves yet.' : ''}</span>`;
 }
 $('#capInput').addEventListener('change', () => setCaption(S.cur, $('#capInput').value));
-$('#capInput').addEventListener('input', () => { const sc = sceneNow(); if (sc && S.shown === sc) $('#caption').textContent = $('#capInput').value; });
+$('#capInput').addEventListener('input', () => { const sc = sceneNow(); if (sc && S.shown === sc) placeCaption($('#capInput').value); });
 $('#capInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
 $('#dirForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(S.cur, $('#dirInput').value); $('#dirInput').blur(); });
 $('#motion').addEventListener('click', (e) => {
@@ -656,6 +662,190 @@ $('#animateBtn').onclick = () => {
   dropMotion(sc); sc.wantMotion = true; sc.noteMotion = $('#dirInput').value.trim(); sc.impError = false; if (improving && improving !== sc) stopImproving();
   renderInspector();
 };
+
+// ---------- length, on-screen text placement, play and export ----------
+// A scene's length and where its words sit are the writer's, kept with the scene and carried through redraws.
+// len: seconds on screen. capPos: the middle of the words as shares of the frame. capSize: letter height / frame width.
+function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+function fmtSec(v) { return v >= 60 ? `${Math.floor(v / 60)}:${String(Math.round(v % 60)).padStart(2, '0')}` : `${Number(v.toFixed(1))}s`; }
+function layoutIn(s) {
+  const o = {}, n = Number(s.len ?? s.l);
+  if (n > 0) o.len = clamp(n, 1, 30);
+  const cp = s.capPos ? [s.capPos.x, s.capPos.y] : s.cp;
+  if (Array.isArray(cp) && cp.every((v) => Number.isFinite(Number(v)))) o.capPos = { x: clamp(Number(cp[0]), 0.08, 0.92), y: clamp(Number(cp[1]), 0.05, 0.95) };
+  const cs = Number(s.capSize ?? s.cs); if (cs > 0) o.capSize = clamp(cs, 0.03, 0.2);
+  return o;
+}
+function layoutOut(sc) {
+  const o = {};
+  if (sc.len != null) o.len = sc.len;
+  if (sc.capPos) o.cp = [Number(sc.capPos.x.toFixed(4)), Number(sc.capPos.y.toFixed(4))];
+  if (sc.capSize != null) o.cs = Number(sc.capSize.toFixed(4));
+  return o;
+}
+// Without a length set by hand, a scene lasts as long as the illustrator planned the shot, or as long as its words take to say.
+function autoLen(i) {
+  const sec = Number(sceneFor(i)?.shot?.sec); if (sec > 0) return clamp(sec, 1, 30);
+  const words = (S.paras[i]?.text.match(/\S+/g) || []).length;
+  return clamp(Math.round((words / 2.6) * 2) / 2, 2, 30);
+}
+function lengthOf(i) { return sceneFor(i)?.len ?? autoLen(i); }
+// A change made while a new drawing is on its way goes on both, so it is not lost whichever lands.
+function setLayout(idx, patch, why) {
+  const both = new Set([activeFor(idx), sceneFor(idx)].filter(Boolean)); if (!both.size) return;
+  for (const sc of both) for (const [k, v] of Object.entries(patch)) { if (v == null) delete sc[k]; else sc[k] = v; }
+  if (why) markDirty(why);
+  if (idx === S.cur) { stage.setLength(lengthOf(idx)); placeCaption(); }
+  inspSig = ''; renderPages();
+}
+
+function renderLength(sc) {
+  const i = S.cur, el = $('#lenInput');
+  $('#lenRow').hidden = !S.paras[i]; el.disabled = !sc; $('#lenAuto').disabled = sc?.len == null;
+  if (document.activeElement !== el) el.value = S.paras[i] ? lengthOf(i) : '';
+  $('#lenHint').textContent = sc?.len != null ? `set by hand · auto is ${fmtSec(autoLen(i))}` : sc?.shot?.sec ? 'from the shot plan' : sc ? 'from the words' : '';
+}
+$('#lenInput').addEventListener('change', (e) => {
+  const v = Number(e.target.value); if (!(v > 0)) { e.target.value = lengthOf(S.cur); return; }
+  setLayout(S.cur, { len: clamp(Math.round(v * 10) / 10, 1, 30) }, `Scene ${S.cur + 1} length`);
+});
+$('#lenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+$('#lenAuto').onclick = () => setLayout(S.cur, { len: null }, `Scene ${S.cur + 1} length`);
+
+// Trim: drag the right edge of a scene's block. The scale stays put while dragging, so the edge follows the pointer.
+$('#pages').addEventListener('pointerdown', (e) => {
+  const h = e.target.closest('.trim'); if (!h) return;
+  e.preventDefault(); e.stopPropagation(); h.setPointerCapture(e.pointerId);
+  const i = Number(h.dataset.trim), blk = h.parentElement, start = lengthOf(i), x0 = e.clientX, pps = S.pps || 20;
+  let len = start; S.trimming = true; S.trimmed = false; blk.classList.add('trimming');
+  const move = (ev) => {
+    len = clamp(Math.round((start + (ev.clientX - x0) / pps) * 2) / 2, 1, 30);
+    if (len !== start) S.trimmed = true;
+    blk.style.width = Math.max(30, len * pps) + 'px'; blk.querySelector('small').textContent = fmtSec(len);
+  };
+  const up = () => {
+    h.removeEventListener('pointermove', move); h.removeEventListener('pointerup', up); h.removeEventListener('pointercancel', up);
+    S.trimming = false; blk.classList.remove('trimming'); pagesSig = '';
+    if (len !== start) setLayout(i, { len }, `Scene ${i + 1} length`); else renderPages();
+    setTimeout(() => { S.trimmed = false; }, 0);
+  };
+  h.addEventListener('pointermove', move); h.addEventListener('pointerup', up); h.addEventListener('pointercancel', up);
+});
+
+// The on-screen words: drag to move, drag the corner or scroll to resize, double-click to put them back.
+function placeCaption(text) {
+  const sc = S.shown, el = $('#caption'); text = text ?? captionOf(sc);
+  $('#capText').textContent = text; el.hidden = !text.trim();
+  const pos = sc?.capPos || CAPTION;
+  el.style.left = pos.x * 100 + '%'; el.style.top = pos.y * 100 + '%'; el.style.setProperty('--cs', sc?.capSize ?? CAPTION.size);
+}
+function dragCaption(e, resize) {
+  const sc = S.shown, idx = S.cur; if (!sc || !S.paras[idx]) return;
+  e.preventDefault(); e.stopPropagation();
+  const el = $('#caption'), frame = $('#phone').getBoundingClientRect(); el.setPointerCapture(e.pointerId); el.classList.add('dragging');
+  const p0 = { ...(sc.capPos || CAPTION) }, s0 = sc.capSize ?? CAPTION.size, x0 = e.clientX, y0 = e.clientY;
+  const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, d0 = Math.max(12, Math.hypot(x0 - cx, y0 - cy));
+  let pos = p0, size = s0;
+  const move = (ev) => {
+    if (resize) { size = clamp(s0 * (Math.hypot(ev.clientX - cx, ev.clientY - cy) / d0), 0.03, 0.2); el.style.setProperty('--cs', size); }
+    else { pos = { x: clamp(p0.x + (ev.clientX - x0) / frame.width, 0.08, 0.92), y: clamp(p0.y + (ev.clientY - y0) / frame.height, 0.05, 0.95) }; el.style.left = pos.x * 100 + '%'; el.style.top = pos.y * 100 + '%'; }
+  };
+  const up = () => {
+    el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', up); el.classList.remove('dragging');
+    if (resize && size !== s0) setLayout(idx, { capSize: size }, `Scene ${idx + 1} text size`);
+    if (!resize && (pos.x !== p0.x || pos.y !== p0.y)) setLayout(idx, { capPos: pos }, `Scene ${idx + 1} text moved`);
+  };
+  el.addEventListener('pointermove', move); el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+}
+$('#caption').addEventListener('pointerdown', (e) => dragCaption(e, e.target.id === 'capHandle'));
+$('#caption').addEventListener('dblclick', () => setLayout(S.cur, { capPos: null, capSize: null }, `Scene ${S.cur + 1} text reset`));
+let wheelTimer = 0;
+$('#caption').addEventListener('wheel', (e) => {
+  const sc = S.shown; if (!sc) return; e.preventDefault();
+  const size = clamp((sc.capSize ?? CAPTION.size) * (1 - e.deltaY * 0.0015), 0.03, 0.2), idx = S.cur;
+  for (const x of new Set([activeFor(idx), sceneFor(idx)].filter(Boolean))) x.capSize = size;
+  placeCaption(); inspSig = ''; renderInspector();
+  clearTimeout(wheelTimer); wheelTimer = setTimeout(() => markDirty(`Scene ${idx + 1} text size`), 500);
+}, { passive: false });
+$('#capSize').addEventListener('input', (e) => { const sc = S.shown; if (sc) $('#caption').style.setProperty('--cs', Number(e.target.value) / 100); });
+$('#capSize').addEventListener('change', (e) => setLayout(S.cur, { capSize: Number(e.target.value) / 100 }, `Scene ${S.cur + 1} text size`));
+$('#capReset').onclick = () => setLayout(S.cur, { capPos: null, capSize: null }, `Scene ${S.cur + 1} text reset`);
+
+// Play: every drawn scene in order, each for its length, on the stage. Typing or picking a scene stops it.
+const drawnScenes = () => S.paras.map((_, i) => i).filter((i) => sceneFor(i)?.lines.length);
+function playAt(i) {
+  const p = S.paras[i]; if (!p) return stopPlay();
+  clearTimeout(S.play?.timer); S.play = { i };
+  ta.setSelectionRange(p.end, p.end); S.shown = null; moved(true); stage.restart();
+  S.play.timer = setTimeout(() => { const next = drawnScenes().find((j) => j > i); if (next == null) stopPlay(); else playAt(next); }, lengthOf(i) * 1000);
+  renderPlay();
+}
+function stopPlay() {
+  if (!S.play) return;
+  clearTimeout(S.play.timer); S.play = null; stage.playing = false; stage.restart(); pagesSig = ''; renderPlay();
+}
+function togglePlay() {
+  if (S.play) return stopPlay();
+  const list = drawnScenes(); if (!list.length) return;
+  stage.playing = true; playAt(list.includes(S.cur) && S.cur !== list[list.length - 1] ? S.cur : list[0]);
+}
+function renderPlay() { $('#playBtn').textContent = S.play ? '■ Stop' : '▶ Play'; $('#playBtn').classList.toggle('on', Boolean(S.play)); pagesSig = ''; renderPages(); }
+$('#playBtn').onclick = () => togglePlay();
+// The timeline's scale follows the width it has.
+new ResizeObserver(() => { pagesSig = ''; renderPages(); }).observe($('#pages').parentElement);
+
+// Export: render every drawn scene into one MP4 in this browser, then download it.
+// The size is the short side, as in 1080p: a vertical video is 1080×1920, a wide one 1920×1080.
+const exportSize = (res) => (S.pack?.visual === 'storyboard' ? [res, Math.round(res * 16 / 9)] : [Math.round(res * 16 / 9), res]);
+function exportPlan() {
+  const list = drawnScenes(), missing = S.paras.map((_, i) => i).filter((i) => !list.includes(i)), res = Number($('#exportRes').value);
+  const total = list.reduce((a, i) => a + lengthOf(i), 0), [W, H] = exportSize(res);
+  return { list, missing, total, W, H, fps: Number($('#exportFps').value) };
+}
+function renderExportSum() {
+  const x = exportPlan();
+  $('#exportSum').textContent = `${x.list.length} scene${x.list.length === 1 ? '' : 's'} · ${fmtSec(x.total)} · ${x.W}×${x.H} · ${STYLES[STYLE_ORDER[S.styleIdx]].label} style`
+    + (x.missing.length ? `. Not drawn yet, so left out: scene${x.missing.length === 1 ? '' : 's'} ${x.missing.map((i) => i + 1).join(', ')}.` : '.');
+  const pv = $('#exportPreview'); pv.width = x.W > x.H ? 480 : 216; pv.height = Math.round((pv.width * x.H) / x.W);
+}
+function openExport() {
+  if (S.exporting) { $('#exportDlg').showModal(); return; }
+  stopPlay();
+  $('#exportOpts').hidden = false; $('#exportGo').hidden = false; $('#exportSave').hidden = true; $('#exportBar').hidden = true;
+  $('#exportCancel').textContent = 'Close'; $('#exportMsg').textContent = '';
+  renderExportSum(); $('#exportDlg').showModal();
+}
+$('#exportBtn').onclick = openExport;
+$('#exportRes').onchange = renderExportSum; $('#exportFps').onchange = renderExportSum;
+$('#exportCancel').onclick = () => { if (S.exporting) S.exporting.abort(); else $('#exportDlg').close(); };
+$('#exportGo').onclick = async () => {
+  const x = exportPlan(); if (!x.list.length) return;
+  const ctrl = S.exporting = new AbortController(), t0 = performance.now();
+  $('#exportOpts').hidden = true; $('#exportGo').hidden = true; $('#exportBar').hidden = false; $('#exportFill').style.width = '0%';
+  $('#exportCancel').textContent = 'Cancel'; renderPages();
+  const pv = $('#exportPreview').getContext('2d');
+  const scenes = x.list.map((i) => { const sc = sceneFor(i); return { lines: sc.lines, sec: lengthOf(i), caption: S.pack.visual === 'storyboard' ? captionOf(sc) : '', capPos: sc.capPos, capSize: sc.capSize }; });
+  try {
+    const blob = await exportVideo({ scenes, mode: S.pack.visual, style: STYLE_ORDER[S.styleIdx], size: [x.W, x.H], fps: x.fps, signal: ctrl.signal,
+      onFrame: ({ n, total, scene, canvas }) => {
+        if (n % 3 && n !== total) return;
+        $('#exportFill').style.width = (100 * n / total).toFixed(1) + '%';
+        $('#exportMsg').textContent = `Scene ${x.list[scene] + 1} · frame ${n} of ${total}`;
+        pv.drawImage(canvas, 0, 0, pv.canvas.width, pv.canvas.height);
+      } });
+    const name = ($('#name').value.trim() || 'Untitled').replace(/[^\w\- ]+/g, '').trim() || 'storyviz';
+    const a = $('#exportSave'); if (a.href) URL.revokeObjectURL(a.href);
+    a.href = URL.createObjectURL(blob); a.download = `${name}.mp4`; a.hidden = false; a.click();
+    $('#exportMsg').textContent = `Done in ${fmtSec((performance.now() - t0) / 1000)}: ${(blob.size / 1e6).toFixed(1)} MB, saved to your downloads as “${a.download}”.`;
+  } catch (e) {
+    $('#exportMsg').textContent = e.name === 'AbortError' ? 'Cancelled.' : `Export failed: ${e.message || e}`;
+    $('#exportOpts').hidden = false; $('#exportGo').hidden = false; $('#exportBar').hidden = true;
+    if (e.name !== 'AbortError') console.error(e);
+  } finally {
+    S.exporting = null; $('#exportCancel').textContent = 'Close'; renderPages();
+  }
+};
+$('#exportDlg').addEventListener('close', () => S.exporting?.abort());
 
 // ---------- queue ----------
 // Everything that is waiting for the model, with the prompt that was sent, and a way to cancel it,
@@ -853,27 +1043,36 @@ function showCurrent() {
   if (sc === S.shown) return;
   S.shown = sc; showShot(null);
   if (!sc || !sc.lines.length) { if (!sc) { stage.clear(); $('#title').textContent = ''; } return; }
-  stage.load(sc.lines, true);
+  stage.load(sc.lines, !S.play); stage.setLength(lengthOf(S.cur)); stage.restart();
 }
 
 function showShot(o) {
   const on = Boolean(o) && S.pack?.visual === 'storyboard';
   $('#phone').hidden = !on; if (!on) return;
-  $('#caption').textContent = captionOf(S.shown);
+  placeCaption();
 }
 
+// The timeline: one block per paragraph, as wide as the scene is long, on one scale so lengths compare at a glance.
+let pagesSig = '';
 function renderPages() {
-  let total = 0;
+  if (S.trimming) return;
+  const lens = S.paras.map((_, i) => lengthOf(i)), total = lens.reduce((a, b, i) => a + (sceneFor(i)?.lines.length ? b : 0), 0);
+  $('#total').textContent = total ? fmtSec(total) : '';
+  $('#exportBtn').disabled = !total || Boolean(S.exporting); $('#playBtn').disabled = !total;
+  const box = $('#pages'), pps = S.pps = clamp((box.clientWidth - 6 * S.paras.length) / Math.max(1, lens.reduce((a, b) => a + b, 0)), 4, 46);
   const html = S.paras.map((p, i) => {
-    const sc = sceneFor(i), act = activeFor(i); const shot = sc?.shot; if (shot?.sec) total += Number(shot.sec) || 0;
-    const label = shot && i === S.cur ? `${i + 1} · ${esc(shot.beat || 'beat')}${shot.sec ? ' ' + shot.sec + 's' : ''}` : String(i + 1);
-    return `<button data-i="${i}" class="${i === S.cur ? 'on' : ''} ${sc?.lines.length ? 'ready' : ''} ${act && (flying(act) || act.imps) ? 'busy' : ''}">${label}</button>`;
-  }).join('') + (total ? `<span class="total">${total}s</span>` : '');
-  $('#pages').innerHTML = S.paras.length > 1 || total ? html : '';
+    const sc = sceneFor(i), act = activeFor(i), shot = sc?.shot, drawn = Boolean(sc?.lines.length);
+    const tip = `Scene ${i + 1}${shot?.beat ? ' · ' + shot.beat : ''} · ${fmtSec(lens[i])}${sc?.len != null ? ' (set by hand)' : ''}${drawn ? '. Drag the right edge to trim.' : '. Not drawn yet.'}`;
+    return `<button data-i="${i}" style="width:${Math.max(30, lens[i] * pps).toFixed(1)}px" title="${esc(tip)}" class="${i === S.cur ? 'on' : ''} ${drawn ? 'ready' : ''} ${act && (flying(act) || act.imps) ? 'busy' : ''} ${sc?.len != null ? 'set' : ''} ${S.play?.i === i ? 'playing' : ''}">`
+      + `<b>${i + 1}</b><small>${fmtSec(lens[i])}</small>${drawn ? `<i class="trim" data-trim="${i}"></i>` : ''}</button>`;
+  }).join('');
+  if (html !== pagesSig) { box.innerHTML = html; pagesSig = html; }
+  $('.timeline-row').hidden = !S.paras.length;
   renderInspector();
 }
 $('#pages').addEventListener('click', (e) => {
-  const b = e.target.closest('button'); if (!b) return; const p = S.paras[Number(b.dataset.i)]; if (!p) return;
+  const b = e.target.closest('button'); if (!b || S.trimmed) return; const p = S.paras[Number(b.dataset.i)]; if (!p) return;
+  stopPlay();
   ta.focus(); ta.setSelectionRange(p.end, p.end); moved(true);
 });
 

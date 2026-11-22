@@ -37,7 +37,8 @@
     <div class="stage-wrap">
       <div id="stage"></div>
       <div class="phone" id="phone" hidden>
-        <div class="phone-caption" id="caption"></div>
+        <!-- Drag the words to move them; drag the corner or scroll over them to resize. Double-click puts them back. -->
+        <div class="phone-caption" id="caption" title="Drag to move. Drag the corner or scroll to resize. Double-click to reset."><span id="capText"></span><i class="cap-handle" id="capHandle"></i></div>
       </div>
       <div class="overlay top-left"><div class="title" id="title"></div></div>
       <button class="overlay top-right hud" id="hud" hidden><b id="hudBig"></b><span id="hudSmall"></span></button>
@@ -55,9 +56,19 @@
     </div>
     <!-- Everything about how the current scene looks lives here, so none of it has to be written into the script. -->
     <div class="scene-bar">
-      <div class="pages" id="pages"></div>
+      <div class="timeline-row">
+        <button class="mini play" id="playBtn" title="Play every scene in order, each for its length (Space when not typing)">▶ Play</button>
+        <!-- One block per scene, as wide as it is long. Drag a block's right edge to trim or stretch it. -->
+        <div class="pages" id="pages"></div>
+        <span class="total" id="total"></span>
+        <button class="solid" id="exportBtn" title="Render every drawn scene, for its length, into one MP4">Export video</button>
+      </div>
       <div class="insp" id="insp">
-        <label class="insp-row" id="capRow"><span>On-screen text</span><input id="capInput" class="field" maxlength="60" spellcheck="false" placeholder="Words shown on screen during this scene"></label>
+        <div class="insp-row" id="capRow"><span>On-screen text</span><input id="capInput" class="field" maxlength="60" spellcheck="false" placeholder="Words shown on screen during this scene">
+          <label class="cap-size" title="Text size"><small>Size</small><input type="range" id="capSize" min="3" max="20" step="0.5"></label>
+          <button class="mini" id="capReset" title="Put the words back in their usual place and size">Reset</button></div>
+        <div class="insp-row" id="lenRow"><span>Length</span><input id="lenInput" class="field num" type="number" min="1" max="30" step="0.5" title="Seconds this scene stays on screen"><small class="unit">s</small>
+          <button class="mini" id="lenAuto" title="Go back to the length worked out from the words">Auto</button><small class="hint" id="lenHint"></small></div>
         <form class="insp-row" id="dirForm"><span>Direction</span><input id="dirInput" class="field" maxlength="300" spellcheck="false" placeholder="What to show and how it moves, e.g. cut to the cooling towers misting water"><button class="mini" id="dirBtn">Send</button></form>
         <div class="insp-row" id="motionRow"><span>Motion</span><div class="chips" id="motion"></div><button class="mini" id="animateBtn" title="Ask the illustrator to choreograph this scene again">Re-animate</button></div>
       </div>
@@ -146,6 +157,19 @@
 <dialog id="rulesDlg">
   <div class="dlg-head"><h2 id="rulesTitle">Guides</h2><button class="x" data-close aria-label="Close">×</button></div>
   <div class="rules" id="rules"></div>
+</dialog>
+
+<dialog id="exportDlg">
+  <div class="dlg-head"><h2>Export video</h2><button class="x" data-close aria-label="Close">×</button></div>
+  <p class="empty" id="exportSum"></p>
+  <div class="export-opts" id="exportOpts">
+    <label>Size <select id="exportRes" class="field"><option value="1080">1080p</option><option value="720">720p</option></select></label>
+    <label>Frame rate <select id="exportFps" class="field"><option value="30">30 fps</option><option value="60">60 fps</option></select></label>
+  </div>
+  <div class="export-view"><canvas id="exportPreview"></canvas></div>
+  <div class="export-bar" id="exportBar" hidden><i id="exportFill"></i></div>
+  <p class="empty" id="exportMsg"></p>
+  <div class="export-acts"><button class="mini" id="exportCancel">Cancel</button><a class="solid" id="exportSave" hidden>Download again</a><button class="solid" id="exportGo">Export</button></div>
 </dialog>
 
 <script type="module" src="/main.js"></script>
