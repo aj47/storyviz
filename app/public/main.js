@@ -23,6 +23,7 @@ const stage = new Stage($('#stage'), {
   onTitle: (t) => { $('#title').textContent = t; },
   onShot: (o) => showShot(o),
 });
+window.__stage = stage;
 
 // ---------- text helpers ----------
 function paragraphs(text) {

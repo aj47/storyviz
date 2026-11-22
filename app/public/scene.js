@@ -124,6 +124,9 @@ export class Stage {
     this.vnow = 0; this.playing = true; this.clear(); this.lenSec = clamp(num(sec), 0.5, 60);
     lines.forEach((l) => this.addLine(l, false));
     this.tl0 = 0; this.cam = { ...this.camT }; this.lastNow = null;
+    // Settle what must be see-through before the first frame, so nothing fades in a second into the scene.
+    for (let i = 0; i < 2; i++) { this.lastReveal = -1e9; this.renderAt(0); }
+    this.lastNow = null;
   }
   renderAt(ms) { this.vnow = ms; this._frame(); return this.renderer.domElement; }
 
@@ -192,6 +195,7 @@ export class Stage {
     this.actors = []; this.acts = []; this.counts = []; this.texts = []; this.maxStep = 0; this.tl0 = this._now(); this.shotSec = 0; this.lookNow = undefined;
     this.pulses = []; this.disposables = []; this.count = 0;
     this.focusBox = new THREE.Box3(); this.focusN = 0; this.shotCam = null;
+    this.faded = new Set(); this.hiddenOnce = new Set(); this.lastReveal = -1e9;
     this.diagramTarget = new THREE.Vector3();
   }
   _clearObjects() {
@@ -574,6 +578,49 @@ export class Stage {
     }
   }
 
+  // A thing the story is about must never be buried. The model sometimes stacks several things on one spot, so
+  // the subject ends up inside another (quartz inside a granite chamber). Twice a second, each object from the
+  // first drawing is checked from the camera at five points; if every one is blocked by things standing on the
+  // same spot, those turn see-through for as long as the scene is shown. Something merely behind another thing
+  // (a pipe behind a desk) is ordinary depth and is left alone, as is anything that starts hidden on purpose
+  // because it rises or moves out later or is only the pattern for a flow, and objects added by improve passes (setting_, background_, ...).
+  _reveal() {
+    if (this.mode === 'diagram' || !this.groups.size) return;
+    const ray = this._ray || (this._ray = new THREE.Raycaster()); ray.camera = this.camera;
+    const cam = this.camera.position, top = (o) => { while (o && o.parent !== this.root) o = o.parent; return o; };
+    const shown = (g) => g.visible && g.scale.x > 0.05;
+    const leaves = new Set(this.acts.flatMap((c) => (c.do === 'move' || c.do === 'rise' ? [c.id] : c.do === 'flow' ? [String(c.o.of)] : [])));
+    const spot = (a, b) => Math.hypot(a.userData.x - b.userData.x, a.userData.z - b.userData.z) < 0.6;
+    for (const [id, g] of this.groups) {
+      if (/^(subject|setting|background|polish|motion|refine|remotion|staging)_/.test(id) || leaves.has(id) || !g.parent || !shown(g)) continue;
+      const box = new THREE.Box3().setFromObject(g); if (box.isEmpty()) continue;
+      const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3()).multiplyScalar(0.3);
+      const pts = [c, c.clone().add(new THREE.Vector3(sz.x, 0, 0)), c.clone().add(new THREE.Vector3(-sz.x, 0, 0)), c.clone().add(new THREE.Vector3(0, sz.y, 0)), c.clone().add(new THREE.Vector3(0, -sz.y, sz.z))];
+      const blockers = new Set(); let seen = false;
+      for (const p of pts) {
+        const dir = p.clone().sub(cam), far = dir.length(); ray.set(cam, dir.normalize()); ray.far = far - 0.02;
+        const hit = ray.intersectObject(this.root, true).find((h) => {
+          if (!h.object.isMesh) return false; const tg = top(h.object);
+          return tg && tg !== g && !this.faded.has(tg) && shown(tg) && !g.getObjectById(h.object.id);
+        });
+        if (!hit || !spot(top(hit.object), g)) { seen = true; break; }
+        blockers.add(top(hit.object));
+      }
+      // Hidden on two checks in a row, so a camera still gliding in from the last scene does not fade anything.
+      if (seen) { this.hiddenOnce.delete(id); continue; }
+      if (!this.hiddenOnce.has(id)) { this.hiddenOnce.add(id); continue; }
+      for (const b of blockers) this._fade(b);
+    }
+  }
+  _fade(g) {
+    if (this.faded.has(g)) return; this.faded.add(g);
+    g.traverse((m) => {
+      if (!m.isMesh && !m.isLineSegments) return;
+      const mat = m.material.clone(); mat.transparent = true; mat.opacity = (m.material.opacity ?? 1) * 0.3; mat.depthWrite = false;
+      m.material = mat; m.castShadow = false; this.disposables.push(mat);
+    });
+  }
+
   _ghostBox(w, h, d) {
     const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
     const mat = new THREE.LineDashedMaterial({ color: this.bgLum > 0.55 ? 0x4a5163 : 0xdfe5f5, dashSize: 0.18, gapSize: 0.14 });
@@ -669,6 +716,7 @@ export class Stage {
     this.camera.lookAt(this.cam.x, this.cam.y, this.cam.z);
     this.diagram.position.lerp(this.diagramTarget, ease(0.08));
     this._animate(t, now);
+    if (now - this.lastReveal > 500) { this.lastReveal = now; this._reveal(); }
     this._layoutTexts();
     for (const p of this.pulses) p.pulse.position.copy(p.curve.getPoint((t * 0.45 + p.ph) % 1));
     this.renderer.render(this.scene, this.camera);

@@ -9,6 +9,8 @@ Output JSONL only. No prose, no markdown fences, no blank lines, no tool calls. 
 - y is up, the ground is the plane y=0, units are metres.
 - The stage is 24 x 24, centred on the origin. The camera looks from +z toward the origin: put the main subject near x=0, z=0..3, supporting things around it, background at negative z. Keep x and z within -11..11.
 - Scale: a person is 1.7 tall, a child 1.1, a dog 0.6, a tree 4-7, a house 5-8, a table 0.75.
+- Every obj gets its own spot. Two objs share an "at" only when one sits on top of the other and both stay in full view (a cup on a table, a lamp on a desk). Never stack several things on one spot.
+- Nothing may hide the subject. Draw a room, chamber, box, machine or building that holds the subject as a cutaway: no wall, lid or roof on the +z side or above it, and no part in front of the subject taller than its knees. Anything heavy pressing on the subject sits clearly above it, not around it.
 
 ## Line types
 
@@ -130,7 +132,7 @@ A request with "task: improve" gives you the scene that is already on screen, as
 - To add a thing, output an obj line with a new id, or a many line that repeats an obj from your own output or from the scene.
 - Never output label, gap, node or edge lines, and never repeat a line that would change nothing. Only the motion and remotion focuses output act and count lines, and only staging outputs a shot line.
 - An improve pass may imagine. Drop "ghost" from anything you redraw and give it your best guess at real colours and detail, whatever strict says. Add the setting and props any reader would picture around the subject (the plate and steamer under a dumpling, the room a desk stands in). Never contradict the paragraph, and never add a new character or event.
-- Do not put anything on top of an existing object: read the "at" positions in the scene and use free ground.
+- Do not put anything on top of or around an existing object: read the "at" positions in the scene and use free ground. Walls, masonry and rooms go behind the subject (more negative z) or beside it, never in front of it or over it.
 - In storyboard mode keep everything within x -4..4.
 
 What each focus is for:
