@@ -1,4 +1,4 @@
-import { Stage, STYLES, STYLE_ORDER, actKey, FX, registerStyle, unregisterStyle } from './scene.js';
+import { Stage, STYLES, STYLE_ORDER, actKey, FX, ACTS, registerStyle, unregisterStyle } from './scene.js';
 import { exportVideo, CAPTION } from './export.js';
 
 const $ = (s) => document.querySelector(s);
@@ -22,6 +22,7 @@ window.__sv = S; // for debugging from the console
 const stage = new Stage($('#stage'), {
   onTitle: (t) => { $('#title').textContent = t; },
   onShot: (o) => showShot(o),
+  onPick: (id) => { S.picked = id == null ? null : String(id); stage.highlight(S.picked); renderThings(); },
 });
 window.__stage = stage;
 
@@ -107,8 +108,8 @@ function loadProject(p) {
   for (const sc of S.scenes.values()) { sc.ctrl?.abort(); stopImproving(sc); }
   S.scenes.clear();
   for (const s of p.scenes || []) {
-    const raw = (s.raw || []).filter((r) => parseLine(r)), lines = raw.map(parseLine); if (!lines.length) continue;
-    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', caption: s.cap || undefined, motionTried: Boolean(s.mo), status: 'done', ...layoutIn(s), shot: lines.filter((o) => o.t === 'shot').pop() || null });
+    const { lines, raw } = cleanScene((s.raw || []).filter((r) => parseLine(r))); if (!lines.length) continue;
+    S.scenes.set(s.key, { key: s.key, idx: s.idx, pack: p.pack, seq: ++S.seq, text: s.text, lines, raw, round: s.round || 0, guide: s.guide || '', removed: Array.isArray(s.rm) ? s.rm : [], caption: s.cap || undefined, motionTried: Boolean(s.mo), status: 'done', ...layoutIn(s), shot: lines.filter((o) => o.t === 'shot').pop() || null });
   }
   ta.value = p.text || ''; ta.setSelectionRange(0, 0); ta.scrollTop = 0;
   S.coach.dismissed = new Set(Array.isArray(p.dismissed) ? p.dismissed : []);
@@ -163,7 +164,7 @@ function snapshot(p) {
       for (const x of S.scenes.values()) if (x.pack === S.pack.id && x.idx === i && x.status === 'done' && x.raw.length && (!sc || x.seq > sc.seq)) sc = x;
     }
     const key = sc?.key.replace(/\|old$/, '');
-    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', cap: sc.caption || '', mo: sc.motionTried ? 1 : 0, ...layoutOut(sc) });
+    if (sc && !kept.has(key)) kept.set(key, { key, idx: i, text: sc.text, raw: sc.raw, round: sc.round || 0, guide: sc.guide || '', rm: sc.removed?.length ? sc.removed : undefined, cap: sc.caption || '', mo: sc.motionTried ? 1 : 0, ...layoutOut(sc) });
   });
   p.dismissed = [...S.coach.dismissed].slice(-200);
   p.scenes = [...kept.values()];
@@ -536,7 +537,41 @@ function earlierVersion(text, wanted) {
 }
 
 // One place where a line from Kimi changes a scene, whether it is a first drawing, an update or an improvement.
+// The model sometimes invents a motion that does not exist. One that means "take it out" ({"do":"remove"}) is
+// turned into the drop it meant; any other is ignored, so it never shows as a motion that does nothing.
+const REMOVES = ['remove', 'delete', 'drop', 'hide', 'erase', 'clear', 'cut', 'vanish_now'];
+function normalizeLine(o) {
+  if (!o || typeof o !== 'object') return null;
+  if (o.t === 'act' && !ACTS.includes(o.do)) return REMOVES.includes(String(o.do).toLowerCase()) && o.id != null ? { t: 'drop', id: o.id } : null;
+  if ((o.t === 'remove' || o.t === 'delete') && o.id != null) return { t: 'drop', id: o.id };
+  return o;
+}
+// Copies a many line would put where copies of the same thing already stand are left out, so a pass that sends
+// the same row of palms again does not stack a second set on top of the first.
+function newSpots(lines, o) {
+  const have = lines.filter((l) => l.t === 'many' && String(l.of) === String(o.of)).flatMap((l) => (Array.isArray(l.at) ? l.at : []));
+  const at = (Array.isArray(o.at) ? o.at : []).filter((a) => Array.isArray(a) && !have.some((b) => Array.isArray(b) && Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.3));
+  return at.length ? { ...o, at } : null;
+}
+// A saved scene is cleaned the same way when it loads: invented removals are carried out, unknown motions and
+// repeated copies are left out.
+function cleanScene(raws) {
+  const lines = [], raw = [];
+  for (const r of raws) {
+    const parsed = parseLine(r); let o = normalizeLine(parsed); if (!o) continue;
+    if (o.t === 'drop') {
+      const id = String(o.id), gone = (l) => (l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id) || (l.t === 'act' && [l.id, l.of, l.from, l.to].includes(id));
+      for (let i = lines.length - 1; i >= 0; i--) if (gone(lines[i])) { lines.splice(i, 1); raw.splice(i, 1); }
+      continue;
+    }
+    if (o.t === 'many') { o = newSpots(lines, o); if (!o) continue; }
+    lines.push(o); raw.push(o === parsed || (o.t === 'many' && JSON.stringify(o.at) === JSON.stringify(parsed.at)) ? r : JSON.stringify(o));
+  }
+  return { lines, raw };
+}
 function applyLine(sc, o) {
+  o = normalizeLine(o); if (!o) return;
+  if (o.t === 'many') { o = newSpots(sc.lines, o); if (!o) return; }
   const shown = S.shown === sc;
   if (o.t === 'reset') { sc.lines = []; sc.raw = []; sc.shot = null; sc.round = 0; if (shown) { stage.clear(); $('#title').textContent = ''; showShot(null); } return; }
   if (o.t === 'cut') {
@@ -573,6 +608,8 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null, c
   sc.guide = guide ?? base?.guide ?? ''; sc.updating = Boolean(base);
   // So does the on-screen text the writer set by hand.
   sc.caption = caption ?? base?.caption;
+  // And so does everything the writer removed by hand.
+  sc.removed = (base || keep)?.removed || [];
   // And so do its length and where its words sit on screen.
   Object.assign(sc, layoutIn(layoutOut(keep || base || {})));
   if (base) {
@@ -586,7 +623,7 @@ async function startScene(idx, text, key, { fresh = false, guide, from = null, c
     mode: S.pack.visual, style: STYLE_ORDER[S.styleIdx], strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'),
     cast: prev && !base ? prev.raw.filter((r) => r.includes('"t":"obj"') && !r.includes('"ghost":true')).slice(0, 5).join('\n') : '',
-    paragraph: text, fresh, guide: sc.guide, caption: sc.caption || '',
+    paragraph: text, fresh, guide: [sc.guide, removedNote(sc)].filter(Boolean).join('. '), caption: sc.caption || '',
     ...(base ? { update: true, before: base.text, scene: base.raw.join('\n') } : {}),
   };
   try {
@@ -679,6 +716,7 @@ function renderInspector() {
   cap.disabled = !sc; dir.disabled = !drawable; $('#dirBtn').disabled = !drawable;
   $('#animateBtn').disabled = !sc || sc.status !== 'done' || Boolean(sc.wantMotion) || Boolean(sc.imps);
   const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || l.t === 'label' || (l.t === 'obj' && l.step)) : [];
+  renderThings();
   const sig = [S.cur, sc?.key, sc?.caption, sc?.capSize, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : l.t === 'label' ? 'L' + l.text : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
   if (sig === inspSig) return; inspSig = sig;
   $('#capSize').value = ((sc?.capSize ?? CAPTION.size) * 100).toFixed(1); $('#capSize').disabled = $('#capReset').disabled = !sc;
@@ -1067,7 +1105,7 @@ async function improveOnce(sc, focus, note = '') {
     mode: S.pack.visual, strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'), paragraph: sc.text,
     // A refining pass must be a new answer each time; a replay from the cache would change nothing.
-    improve: true, focus, fresh: TURNS.includes(focus) || Boolean(note), guide: [sc.guide, note].filter(Boolean).join('. '), scene: sc.raw.join('\n'),
+    improve: true, focus, fresh: TURNS.includes(focus) || Boolean(note), guide: [sc.guide, note, removedNote(sc)].filter(Boolean).join('. '), scene: sc.raw.join('\n'),
   };
   try {
     await sse('/api/scene', body, imp.ctrl.signal, (ev) => {
@@ -1809,6 +1847,42 @@ $('#notesView').addEventListener('click', (e) => {
   else if ((t = d('nx'))) { const [r, j] = pick(t.nx); r?.notes.splice(j, 1); markDirty('Notes'); renderNotes(); }
   else if ((t = d('cx'))) { const [r] = n.cards.splice(Number(t.cx), 1); r?.ctrl?.abort(); markDirty('Notes'); renderNotes(); }
   else if ((t = d('lead'))) researchNote(t.lead);
+});
+
+// ---------- things in the scene ----------
+// Every object in the scene, by name, with an x to take it out at once. Clicking a thing on the stage picks its
+// chip. What the writer removes is remembered, so later passes never draw it again.
+const thingName = (id) => String(id ?? '').replace(/^((subject|setting|background|polish|motion|refine|remotion|staging)_)+/, '').replace(/_/g, ' ');
+const removedNote = (sc) => (sc?.removed?.length ? `the writer removed these from the scene; never draw them, or anything like them, again: ${sc.removed.join('; ')}` : '');
+let thingsSig = '';
+function renderThings() {
+  const sc = sceneNow(), objs = sc ? sc.lines.filter((l) => l.t === 'obj' && l.id != null) : [];
+  if (sc?.key !== S.pickedIn) { S.pickedIn = sc?.key; if (S.picked) { S.picked = null; stage.highlight(null); } }
+  const sig = [sc?.key, S.picked, S.pack?.visual, objs.map((l) => l.id).join(',')].join('|'); if (sig === thingsSig) return; thingsSig = sig;
+  $('#thingsRow').hidden = S.pack?.visual === 'diagram';
+  $('#things').innerHTML = objs.map((l) => `<span class="chip thing ${S.picked === String(l.id) ? 'on' : ''}" data-id="${esc(l.id)}">${esc(thingName(l.id))}<button data-drop="${esc(l.id)}" title="Remove ${esc(thingName(l.id))} from this scene">×</button></span>`).join('')
+    || `<span class="none">${sc ? 'Nothing drawn yet.' : ''}</span>`;
+}
+function removeThing(sc, id) {
+  const name = thingName(id), o = sc.lines.find((l) => l.t === 'obj' && String(l.id) === String(id));
+  // What it looked like goes with its name, so "energy bolts" made of rainbow boxes is not redrawn under another name.
+  const look = o ? [...new Set((o.parts || []).map((p) => p?.[0]))].slice(0, 3).join(', ') : '';
+  sc.removed = [...(sc.removed || []).filter((x) => !x.startsWith(name + ' (')), `${name}${look ? ` (made of ${look})` : ''}`].slice(-12);
+  if (S.picked === String(id)) { S.picked = null; stage.highlight(null); }
+  applyLine(sc, { t: 'drop', id }); inspSig = ''; renderInspector(); markDirty(`Scene ${sc.idx + 1}: removed ${name}`);
+}
+$('#things').addEventListener('click', (e) => {
+  const sc = sceneNow(); if (!sc) return;
+  const d = e.target.closest('[data-drop]'); if (d) { removeThing(sc, d.dataset.drop); return; }
+  const c = e.target.closest('.thing'); if (!c) return;
+  S.picked = S.picked === c.dataset.id ? null : c.dataset.id; stage.highlight(S.picked); renderThings();
+});
+$('#things').addEventListener('mouseover', (e) => { const c = e.target.closest('.thing'); if (c) stage.highlight(c.dataset.id); });
+$('#things').addEventListener('mouseleave', () => stage.highlight(S.picked));
+// Delete or Backspace removes the picked thing while the stage has the focus of attention.
+document.addEventListener('keydown', (e) => {
+  if (!S.picked || !['Delete', 'Backspace'].includes(e.key) || e.target.closest?.('input, textarea, [contenteditable]')) return;
+  const sc = sceneNow(); if (sc) { e.preventDefault(); removeThing(sc, S.picked); }
 });
 
 boot();

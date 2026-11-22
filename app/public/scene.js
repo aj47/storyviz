@@ -82,7 +82,7 @@ const easeOut = (k) => 1 - (1 - k) ** 3;
 const bounce = (k) => { const n = 7.5625, d = 2.75; if (k < 1 / d) return n * k * k; if (k < 2 / d) return n * (k -= 1.5 / d) * k + 0.75; if (k < 2.5 / d) return n * (k -= 2.25 / d) * k + 0.9375; return n * (k -= 2.625 / d) * k + 0.984375; };
 const ENTERS = ['pop', 'drop', 'grow', 'left', 'right'];
 const ACTS = ['move', 'flow', 'grow', 'rise', 'shake', 'vanish', 'spin', 'flash', 'look', ...FX];
-export { FX };
+export { FX, ACTS };
 const SHAPES = ['box', 'sphere', 'cyl', 'cone', 'torus', 'pyramid', 'wedge', 'dome', 'capsule'];
 const FINISHES = ['glow', 'metal', 'glass'];
 // A part's finish is its last element when that is a word: [shape, centre, size, colour, rotation?, finish?].
@@ -237,6 +237,25 @@ export class Stage {
     const uses = (l) => l.t === 'act' && [l.id, l.of, l.from, l.to].some((r) => typeof r === 'string' && r === id);
     this._dropMotion((m) => uses(m.o));
     this.lines = this.lines.filter((l) => !((l.t === 'obj' && String(l.id) === id) || (l.t === 'many' && String(l.of) === id) || uses(l)));
+  }
+  // The object under a point on the canvas (client coordinates), or null. Effects and halos are never picked.
+  pick(cx, cy) {
+    const r = this.renderer.domElement.getBoundingClientRect(); if (!r.width) return null;
+    const ray = this._ray || (this._ray = new THREE.Raycaster());
+    ray.setFromCamera(new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1), this.camera); ray.far = Infinity;
+    const ids = new Map([...this.groups].map(([id, g]) => [g, id]));
+    for (const h of ray.intersectObject(this.root, true)) {
+      if (!h.object.isMesh) continue;
+      let o = h.object; while (o && o.parent !== this.root) o = o.parent;
+      if (o && ids.has(o) && o.visible) return ids.get(o);
+    }
+    return null;
+  }
+  // Outline one object so the writer can see which thing a chip means.
+  highlight(id) {
+    if (this.hl) { this.scene.remove(this.hl); this.hl.geometry.dispose(); this.hl.material.dispose(); this.hl = null; }
+    const g = id != null && this.groups.get(String(id)); if (!g) return;
+    this.hl = new THREE.Box3Helper(this._box(g).expandByScalar(0.08), 0xffb23f); this.hl.material.depthTest = false; this.hl.renderOrder = 20; this.hl.userData.of = g; this.scene.add(this.hl);
   }
   // Take one motion (an act or a count) out of the scene.
   dropAct(key) {
@@ -843,13 +862,15 @@ export class Stage {
 
   _bindPointer() {
     const el = this.renderer.domElement; let drag = null;
-    el.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; el.setPointerCapture(e.pointerId); });
+    let down = null;
+    el.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY }; down = { ...drag }; el.setPointerCapture(e.pointerId); });
     el.addEventListener('pointermove', (e) => {
       if (!drag) return;
       this.userTheta -= (e.clientX - drag.x) * 0.006; this.userPhi = clamp(this.userPhi - (e.clientY - drag.y) * 0.25, -50, 20);
       drag = { x: e.clientX, y: e.clientY }; this.lastTouch = performance.now();
     });
-    el.addEventListener('pointerup', () => { drag = null; });
+    // A click that did not turn the camera picks the thing under it.
+    el.addEventListener('pointerup', (e) => { drag = null; if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 4) this.hooks.onPick?.(this.pick(e.clientX, e.clientY)); down = null; });
     el.addEventListener('wheel', (e) => { e.preventDefault(); this.zoom = clamp(this.zoom * (1 + e.deltaY * 0.001), 0.4, 2.2); this.lastTouch = performance.now(); }, { passive: false });
     el.addEventListener('dblclick', () => { this.userTheta = 0; this.userPhi = 0; this.zoom = 1; });
   }
@@ -874,6 +895,7 @@ export class Stage {
     this._animate(t, now);
     this._shareLights();
     if (now - this.lastReveal > 500) { this.lastReveal = now; this._reveal(); }
+    if (this.hl) { const g = this.hl.userData.of; if (!g.parent) this.highlight(null); else this._box(g, this.hl.box).expandByScalar(0.08); }
     this._layoutTexts();
     for (const p of this.pulses) p.pulse.position.copy(p.curve.getPoint((t * 0.45 + p.ph) % 1));
     this.renderer.render(this.scene, this.camera);
