@@ -1,4 +1,5 @@
 # Storyviz
+<img width="1350" height="707" alt="image" src="https://github.com/user-attachments/assets/c400cc8f-68c7-491f-96ea-400348a2c659" />
 
 Write a story or a script on the left and each paragraph becomes an animated 3D scene on the right while you type. A coach reads the draft against published writing guides, fact-checks claims with web search, fills blanks, and can edit the draft when asked. Every change is kept in a version history, and any version can be restored or forked into a new project.
 
