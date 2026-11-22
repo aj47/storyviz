@@ -14,6 +14,9 @@ const GATEWAY = process.env.OPENCLAW_GATEWAY || 'http://127.0.0.1:18789';
 const TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ||
   JSON.parse(fs.readFileSync(path.join(os.homedir(), '.openclaw/openclaw.json'), 'utf8')).gateway.auth.token;
 
+// three.js is served from node_modules, whether it was installed in app/ or at the repository root.
+const THREE_DIR = [path.join(ROOT, 'node_modules/three'), path.join(ROOT, '..', 'node_modules/three')].find((d) => fs.existsSync(d)) || path.join(ROOT, 'node_modules/three');
+
 const CACHE = path.join(ROOT, '..', 'cache');
 fs.mkdirSync(CACHE, { recursive: true });
 
@@ -555,7 +558,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET') {
       if (url.pathname.startsWith('/vendor/three/')) {
-        const f = safeJoin(path.join(ROOT, 'node_modules/three'), url.pathname.slice('/vendor/three/'.length));
+        const f = safeJoin(THREE_DIR, url.pathname.slice('/vendor/three/'.length));
         if (f) return sendFile(res, f);
       }
       const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);

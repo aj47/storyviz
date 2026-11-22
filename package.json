@@ -1,0 +1,16 @@
+{
+  "name": "storyviz",
+  "version": "0.1.0",
+  "description": "Write a story or script and watch each paragraph become an animated 3D scene, with a coach that edits and fact-checks the draft.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node app/server.mjs",
+    "prime": "node app/prime.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}
