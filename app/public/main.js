@@ -487,9 +487,12 @@ function applyLine(sc, o) {
   const shown = S.shown === sc;
   if (o.t === 'reset') { sc.lines = []; sc.raw = []; sc.shot = null; sc.round = 0; if (shown) { stage.clear(); $('#title').textContent = ''; showShot(null); } return; }
   if (o.t === 'cut') {
-    const key = actKey({ ...o, t: o.do === 'count' ? 'count' : 'act' }), keep = sc.lines.map((l) => !((l.t === 'act' || l.t === 'count') && actKey(l) === key));
+    // "text" takes every label and counting number off; "label" takes one label (or all of them); anything else is one motion.
+    const words = o.do === 'text' || o.do === 'label', key = words ? '' : actKey({ ...o, t: o.do === 'count' ? 'count' : 'act' });
+    const gone = (l) => (o.do === 'text' ? l.t === 'label' || l.t === 'count' : o.do === 'label' ? l.t === 'label' && (!o.text || l.text === o.text) : (l.t === 'act' || l.t === 'count') && actKey(l) === key);
+    const keep = sc.lines.map((l) => !gone(l)); if (keep.every(Boolean)) return;
     sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
-    if (shown) stage.dropAct(key);
+    if (shown) { if (words) stage.load(sc.lines, false); else stage.dropAct(key); }
     return;
   }
   if (o.t === 'drop') {
@@ -570,6 +573,9 @@ function redraw() {
 // replaced, because the direction changes what it should draw; a finished drawing is updated in place.
 function guideScene(idx, guide, caption) {
   const p = S.paras[idx]; if (!p || p.text.length < 12) return;
+  // "Remove the on-screen text" does not need the model: the text comes off at once. The direction is still
+  // sent and kept with the scene, so later passes do not put text back.
+  if (NO_TEXT.test(guide)) { const now = activeFor(idx) || sceneFor(idx); if (now) { removeText(now); caption = ' '; markDirty(`Scene ${idx + 1} text removed`); } }
   const key = keyOf(p.text), wanted = new Set(S.paras.map((x) => keyOf(x.text)));
   for (const sc of [...S.scenes.values()]) if (flying(sc) && (sc.key === key || (sc.idx === idx && !wanted.has(sc.key)))) { sc.ctrl.abort(); S.scenes.delete(sc.key); }
   const old = S.scenes.get(key); let from = null;
@@ -585,10 +591,11 @@ function guideScene(idx, guide, caption) {
 // direction given to the illustrator, and the motion. None of it is part of the script.
 const sceneNow = () => activeFor(S.cur) || sceneFor(S.cur);
 // Only the opening scene carries on-screen text by default (the text hook). Any other scene shows text only if the writer typed some.
-const captionOf = (sc) => (sc ? sc.caption ?? (sc.idx === 0 ? sc.shot?.text : '') ?? '' : '');
+const captionOf = (sc) => (sc ? (sc.caption ?? (sc.idx === 0 ? sc.shot?.text : '') ?? '').trim() : '');
 function setCaption(idx, text) {
   const sc = activeFor(idx) || sceneFor(idx); if (!sc) return;
-  sc.caption = text.trim().slice(0, 60) || undefined;
+  // Cleared by hand on the opening scene means "none", not "back to the illustrator's".
+  sc.caption = text.trim().slice(0, 60) || (sc.idx === 0 ? ' ' : undefined);
   if (S.shown === sc) showShot(sc.shot);
   markDirty(`Scene ${idx + 1} on-screen text`); inspSig = ''; renderInspector();
 }
@@ -600,6 +607,9 @@ function motionWords(o) {
   return { move: `${id} goes to ${who(o.to)}`, flow: `${o.of ? who(o.of) + 's' : 'dots'} flow from ${who(o.from)} to ${who(o.to)}`, grow: `${id} ${Number(o.k) < 1 ? 'shrinks' : 'grows'}`,
     rise: `${id} rises`, shake: `${id} shakes`, vanish: `${id} vanishes`, spin: `${id} spins`, flash: `${id} is highlighted`, look: `camera on ${id}` }[o.do] || o.do;
 }
+// Takes every piece of text out of a scene: labels, counting numbers and the on-screen caption.
+function removeText(sc) { applyLine(sc, { t: 'cut', do: 'text' }); sc.caption = ' '; if (S.shown === sc) showShot(sc.shot); }
+const NO_TEXT = /\b(remove|no|without|hide|delete|drop|get rid of|lose|take (?:out|off|away))\b[^.]*\b(text|labels?|captions?|words|numbers|counters?)\b/i;
 let inspSig = '';
 function renderInspector() {
   const sc = sceneNow(), mode = S.pack?.visual, drawable = (S.paras[S.cur]?.text.length || 0) >= 12;
@@ -607,14 +617,17 @@ function renderInspector() {
   const cap = $('#capInput'), dir = $('#dirInput');
   cap.disabled = !sc; dir.disabled = !drawable; $('#dirBtn').disabled = !drawable;
   $('#animateBtn').disabled = !sc || sc.status !== 'done' || Boolean(sc.wantMotion) || Boolean(sc.imps);
-  const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || (l.t === 'obj' && l.step)) : [];
-  const sig = [S.cur, sc?.key, sc?.caption, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
+  const moves = sc ? sc.lines.filter((l) => l.t === 'act' || l.t === 'count' || l.t === 'label' || (l.t === 'obj' && l.step)) : [];
+  const sig = [S.cur, sc?.key, sc?.caption, sc?.shot?.text, sc?.guide, moves.map((l) => (l.t === 'obj' ? l.id : l.t === 'label' ? 'L' + l.text : actKey(l))).join(','), sc?.imps?.some((i) => i.focus === 'motion') || sc?.wantMotion ? 1 : 0].join('|');
   if (sig === inspSig) return; inspSig = sig;
   if (document.activeElement !== cap) { cap.value = captionOf(sc); cap.placeholder = sc?.idx === 0 ? 'The text hook shown on screen' : 'None. Type here to put words on screen in this scene'; }
   if (document.activeElement !== dir) dir.value = sc?.guide || '';
   const busy = sc?.wantMotion || sc?.imps?.some((i) => i.focus === 'motion');
-  $('#motion').innerHTML = moves.sort((a, b) => (a.step || 0) - (b.step || 0)).map((l) => `<span class="chip"><b>${Number(l.step) || 1}</b>${esc(motionWords(l))}`
-    + (l.t === 'obj' ? '' : `<button data-key="${esc(actKey(l))}" title="Remove this motion">×</button>`) + '</span>').join('')
+  const texty = moves.filter((l) => l.t === 'label' || l.t === 'count').length;
+  $('#motion').innerHTML = (moves.sort((a, b) => (a.step || 0) - (b.step || 0)).map((l) => (l.t === 'label'
+    ? `<span class="chip"><b>T</b>label “${esc(l.text)}”<button data-label="${esc(l.text)}" title="Remove this label">×</button></span>`
+    : `<span class="chip"><b>${Number(l.step) || 1}</b>${esc(motionWords(l))}` + (l.t === 'obj' ? '' : `<button data-key="${esc(actKey(l))}" title="Remove this motion">×</button>`) + '</span>')).join('')
+    + (texty > 1 ? '<button class="link" data-notext title="Take every label and counting number out of this scene">Remove all text</button>' : ''))
     || `<span class="none">${busy ? 'Motion is on its way.' : sc ? 'Nothing moves yet.' : ''}</span>`;
 }
 $('#capInput').addEventListener('change', () => setCaption(S.cur, $('#capInput').value));
@@ -622,11 +635,15 @@ $('#capInput').addEventListener('input', () => { const sc = sceneNow(); if (sc &
 $('#capInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
 $('#dirForm').addEventListener('submit', (e) => { e.preventDefault(); guideScene(S.cur, $('#dirInput').value); $('#dirInput').blur(); });
 $('#motion').addEventListener('click', (e) => {
-  const key = e.target.closest('button')?.dataset.key, sc = sceneNow(); if (!key || !sc) return;
-  const keep = sc.lines.map((l) => !((l.t === 'act' || l.t === 'count') && actKey(l) === key));
-  sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
-  if (S.shown === sc) stage.dropAct(key);
-  markDirty(`Scene ${S.cur + 1} motion removed`); renderInspector();
+  const b = e.target.closest('button'), sc = sceneNow(); if (!b || !sc) return;
+  if (b.dataset.key) {
+    const key = b.dataset.key, keep = sc.lines.map((l) => !((l.t === 'act' || l.t === 'count') && actKey(l) === key));
+    sc.lines = sc.lines.filter((_, i) => keep[i]); sc.raw = sc.raw.filter((_, i) => keep[i]);
+    if (S.shown === sc) stage.dropAct(key);
+  } else if (b.dataset.label != null) applyLine(sc, { t: 'cut', do: 'label', text: b.dataset.label });
+  else if ('notext' in b.dataset) removeText(sc);
+  else return;
+  markDirty(`Scene ${S.cur + 1} ${b.dataset.key ? 'motion' : 'text'} removed`); inspSig = ''; renderInspector();
 });
 // Re-animate throws the scene's motion away and asks for it again. It jumps the line of automatic work.
 function dropMotion(sc) {
@@ -802,7 +819,7 @@ async function improveOnce(sc, focus, note = '') {
     mode: S.pack.visual, strict: S.strict, kind: S.pack.name, index: idx, total: S.paras.length,
     context: S.paras.slice(0, idx).map((p) => p.text).join('\n\n'), paragraph: sc.text,
     // A refining pass must be a new answer each time; a replay from the cache would change nothing.
-    improve: true, focus, fresh: TURNS.includes(focus) || Boolean(note), guide: note, scene: sc.raw.join('\n'),
+    improve: true, focus, fresh: TURNS.includes(focus) || Boolean(note), guide: [sc.guide, note].filter(Boolean).join('. '), scene: sc.raw.join('\n'),
   };
   try {
     await sse('/api/scene', body, imp.ctrl.signal, (ev) => {

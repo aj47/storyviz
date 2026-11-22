@@ -465,7 +465,7 @@ function sceneRequest(b) {
     parts.unshift('task: update');
     parts.push(`the paragraph before the edit:\n"""\n${String(b.before || '').slice(0, 2500)}\n"""`, `scene on screen now, drawn for the paragraph before the edit:\n${String(b.scene || '').slice(0, 24000)}`);
   }
-  if (b.caption) parts.push(`on-screen text set by the writer (use exactly this as the shot line's "text"):\n"""\n${String(b.caption).slice(0, 60)}\n"""`);
+  if (b.caption && String(b.caption).trim()) parts.push(`on-screen text set by the writer (use exactly this as the shot line's "text"):\n"""\n${String(b.caption).slice(0, 60)}\n"""`);
   if (b.guide) parts.push(`direction from the writer:\n"""\n${String(b.guide).slice(0, 300)}\n"""`);
   if (b.improve) {
     parts.unshift('task: improve', `focus: ${['subject', 'setting', 'background', 'polish', 'motion', 'refine', 'remotion', 'staging'].includes(b.focus) ? b.focus : 'polish'}`);

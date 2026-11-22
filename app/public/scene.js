@@ -164,14 +164,14 @@ export class Stage {
     this.actors = this.actors.filter((a) => !groups.includes(a.g));
   }
   _dropMotion(test) {
-    for (const m of [...this.acts, ...this.counts]) if (test(m)) (m.parts || [m.ring, m.sp]).forEach((x) => x?.parent?.remove(x));
+    for (const m of [...this.acts, ...this.counts]) if (test(m)) { (m.parts || [m.ring, m.sp]).forEach((x) => x?.parent?.remove(x)); if (m.tx) this.texts = this.texts.filter((t) => t !== m.tx); }
     this.acts = this.acts.filter((m) => !test(m)); this.counts = this.counts.filter((m) => !test(m));
   }
 
   // ---------- internals ----------
   _resetState() {
     this.defs = new Map(); this.groups = new Map(); this.copies = new Map(); this.nodes = new Map(); this.pendingEdges = [];
-    this.actors = []; this.acts = []; this.counts = []; this.maxStep = 0; this.tl0 = performance.now(); this.shotSec = 0; this.lookNow = undefined;
+    this.actors = []; this.acts = []; this.counts = []; this.texts = []; this.maxStep = 0; this.tl0 = performance.now(); this.shotSec = 0; this.lookNow = undefined;
     this.pulses = []; this.disposables = []; this.count = 0;
     this.focusBox = new THREE.Box3(); this.focusN = 0; this.shotCam = null;
     this.diagramTarget = new THREE.Vector3();
@@ -408,6 +408,7 @@ export class Stage {
     };
     this.root.add(sp); this.disposables.push(tex, mat);
     const c = { o, key: actKey(o), sp, draw, fmt, from, to, w: cv.width / cv.height, step: clamp(Math.round(num(o.step, 1)), 0, 8), dur: clamp(num(o.dur, 1.6), 0.3, 6), shown: null };
+    c.tx = { sp, anchor: sp.position.clone(), frac: clamp(num(o.size, 0.95), 0.4, 2) * 0.052, w: c.w, k: 0 }; this.texts.push(c.tx);
     this.counts.push(c); this._step(c.step, pop);
   }
   _animate(t, now) {
@@ -488,7 +489,7 @@ export class Stage {
       const live = tt - c.step * D, k = clamp(live / c.dur, 0, 1), inK = clamp(live / 0.35, 0, 1) * (1 - rw);
       c.sp.visible = inK > 0; if (!c.sp.visible) continue;
       const text = c.fmt(c.from + (c.to - c.from) * easeOut(k)); if (text !== c.shown) { c.shown = text; c.draw(text); }
-      const h = clamp(num(c.o.size, 0.95), 0.4, 2) * easeOutBack(inK); c.sp.scale.set(h * c.w, h, 1);
+      c.tx.k = easeOutBack(inK);
     }
   }
   _addMany(o, pop, delay) {
@@ -525,6 +526,29 @@ export class Stage {
     const sp = this._sprite(String(o.text).slice(0, 40));
     sp.position.set(clamp(num(at[0]), -14, 14), clamp(num(at[1], 3), 0.4, 14), clamp(num(at[2]), -14, 14));
     this.root.add(sp);
+    this.texts.push({ sp, anchor: sp.position.clone(), frac: 0.036, w: sp.scale.x / sp.scale.y, k: 1 });
+  }
+
+  // Text in the scene (labels and counting numbers) is laid out on the screen, not in the world: it keeps one
+  // readable size however far the camera zooms, stays inside the visible frame, and never sits on other text.
+  _layoutTexts() {
+    if (!this.texts.length) return;
+    const cam = this.camera; cam.updateMatrixWorld(); cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
+    const tan = Math.tan((cam.fov * D2R) / 2), crop = this.mode === 'storyboard' ? Math.min(1, 9 / 16 / cam.aspect) : 1, placed = [];
+    for (const tx of this.texts) {
+      const sp = tx.sp; if (!sp.parent || !sp.visible || tx.k <= 0) continue;
+      const v = tx.anchor.clone().project(cam); if (v.z >= 1 || v.z <= -1) continue;
+      let h = tx.frac * 2 * tx.k, w = (h * tx.w) / cam.aspect; const maxW = crop * 2 * 0.9;
+      if (w > maxW) { h *= maxW / w; w = maxW; }
+      const x = clamp(v.x, -crop + w / 2 + 0.03, crop - w / 2 - 0.03); let y = clamp(v.y, -0.2 + h / 2, 0.84 - h / 2);
+      for (let i = 0; i < 8; i++) {
+        const hit = placed.find((p) => Math.abs(p.x - x) < (p.w + w) / 2 && Math.abs(p.y - y) < (p.h + h) / 2 + 0.015); if (!hit) break;
+        y = hit.y - (hit.h + h) / 2 - 0.03; if (y < -0.5) { y = placed.reduce((m, p) => Math.max(m, p.y + p.h / 2), -1) + h / 2 + 0.03; break; }
+      }
+      placed.push({ x, y, w, h });
+      const p = new THREE.Vector3(x, y, v.z).unproject(cam), depth = -p.clone().applyMatrix4(cam.matrixWorldInverse).z, wh = h * depth * tan;
+      sp.position.copy(p); sp.scale.set(wh * tx.w, wh, 1);
+    }
   }
 
   _ghostBox(w, h, d) {
@@ -619,6 +643,7 @@ export class Stage {
     this.camera.lookAt(this.cam.x, this.cam.y, this.cam.z);
     this.diagram.position.lerp(this.diagramTarget, 0.08);
     this._animate(t, now);
+    this._layoutTexts();
     for (const p of this.pulses) p.pulse.position.copy(p.curve.getPoint((t * 0.45 + p.ph) % 1));
     this.renderer.render(this.scene, this.camera);
   }

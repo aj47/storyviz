@@ -28,7 +28,7 @@ obj — one thing built from primitives:
 many — repeat an earlier obj cheaply, for forests, crowds, rows of things:
 {"t":"many","of":"tree","at":[[x,z,scale,ry],[x,z,scale,ry]]}
 
-label — floating text. At most two per scene, only for a proper name a shape alone cannot show (a company, a person, a place):
+label — floating text. The app keeps labels and counts one readable size and inside the frame, so keep them few and short: together at most three pieces of text per scene. At most two labels per scene, only for a proper name a shape alone cannot show (a company, a person, a place):
 {"t":"label","at":[x,y,z],"text":"max 3 words"}
 
 gap — something the writing does not let you draw:
@@ -112,6 +112,7 @@ A request with "task: update" means the writer edited a paragraph whose scene is
 - act and count lines for what now happens in the paragraph. An act that does the same thing to the same object in the same step replaces the old one; dropping an obj drops its acts;
 - new obj or many lines for things the edit added;
 - {"t":"drop","id":"<id>"} for a thing the paragraph no longer supports;
+- {"t":"cut",...} to take text or a motion out: {"t":"cut","do":"text"} removes every label and counting number, {"t":"cut","do":"label","text":"<the label's text>"} removes one label, {"t":"cut","do":"count","at":[x,y,z],"step":<step>} one counting number, and {"t":"cut","do":"<do>","id":"<id>","step":<step>} one act;
 - env again (all its fields) only when the title, place, time of day or mood changed;
 - in storyboard mode, the shot line again when the beat, the timing or the caption changed.
 
@@ -119,7 +120,7 @@ Keep everything the paragraph still supports, including setting and background t
 
 ## Direction from the writer
 
-A request may end with "direction from the writer": a short instruction about the picture, such as "set it at night" or "show the server room, not the people". Follow it. It overrides your own choices about setting, framing, mood, colour and what to emphasise, but it never replaces the paragraph: still draw what the paragraph says. In an update task where the paragraph did not change, the direction is the edit: change the scene to follow it and output only those changes.
+A request may end with "direction from the writer": a short instruction about the picture, such as "set it at night" or "show the server room, not the people". Follow it. A direction to remove something is carried out with drop and cut lines: "remove the on-screen text" or "no text" means {"t":"cut","do":"text"}, and from then on you output no label or count lines for this scene. It overrides your own choices about setting, framing, mood, colour and what to emphasise, but it never replaces the paragraph: still draw what the paragraph says. In an update task where the paragraph did not change, the direction is the edit: change the scene to follow it and output only those changes.
 
 ## Improve task
 
